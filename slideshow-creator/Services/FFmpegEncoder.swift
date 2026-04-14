@@ -4,6 +4,7 @@ enum FFmpegEncoder {
     enum VideoEncoder {
         case hardwareH264
         case softwareFastH264
+        case softwareQualityH264
     }
 
     nonisolated static func run(
@@ -231,6 +232,14 @@ enum FFmpegEncoder {
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-crf", "28",
+                "-threads", "0",
+                "-pix_fmt", "yuv420p"
+            ]
+        case .softwareQualityH264:
+            args += [
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "20",
                 "-threads", "0",
                 "-pix_fmt", "yuv420p"
             ]

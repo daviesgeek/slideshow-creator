@@ -46,6 +46,7 @@ final class AppModel: ObservableObject {
     @Published var width: Int = 1920
     @Published var height: Int = 1080
     @Published var fps: Int = 30
+    @Published var encodeSpeedMode: EncodeSpeedMode = .fastestHardware
 
     // Global FFmpeg path (persisted across app launches/projects).
     @Published var ffmpegPath: String {
@@ -108,6 +109,7 @@ final class AppModel: ObservableObject {
             width = 1920
             height = 1080
             fps = 30
+            encodeSpeedMode = .fastestHardware
             status = "Started a new project."
             hasUnsavedChanges = false
         }
@@ -267,6 +269,7 @@ final class AppModel: ObservableObject {
                 width = document.settings.width
                 height = document.settings.height
                 fps = document.settings.fps
+                encodeSpeedMode = document.settings.encodeSpeedMode ?? .fastestHardware
                 // FFmpeg path is now global and persisted via UserDefaults.
                 // If this is the first run with no persisted value, migrate from legacy project setting.
                 if UserDefaults.standard.object(forKey: Self.ffmpegPathDefaultsKey) == nil,
@@ -365,7 +368,8 @@ final class AppModel: ObservableObject {
                 secondsPerImage: secondsPerImage,
                 width: width,
                 height: height,
-                fps: fps
+                fps: fps,
+                encodeSpeedMode: encodeSpeedMode
             ),
             availableFlags: availableFlags,
             selectedExportFlags: Array(selectedExportFlags),
@@ -498,6 +502,10 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _, _, _, _ in
                 self?.markProjectDirty()
             }
+            .store(in: &cancellables)
+
+        $encodeSpeedMode.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
             .store(in: &cancellables)
 
         $items.dropFirst()
@@ -722,6 +730,7 @@ final class AppModel: ObservableObject {
         isEncoding = true
         isEncodingWindowPresented = true
         status = "Encoding..."
+        let selectedEncoder = selectedVideoEncoder
         defer {
             isEncoding = false
             encodingTask = nil
@@ -734,7 +743,7 @@ final class AppModel: ObservableObject {
                 ffmpegURL: ffmpegURL,
                 items: items,
                 outputURL: outputURL,
-                videoEncoder: .hardwareH264
+                videoEncoder: selectedEncoder
             )
 
             encodingProgress = 1
@@ -742,7 +751,8 @@ final class AppModel: ObservableObject {
             encodingRemainingText = "00:00"
             status = output
         } catch {
-            if case AppError.ffmpegFailed(let output) = error,
+            if selectedEncoder == .hardwareH264,
+               case AppError.ffmpegFailed(let output) = error,
                output.localizedCaseInsensitiveContains("h264_videotoolbox") {
                 do {
                     status = "Hardware encoder unavailable. Falling back to software fast mode…"
@@ -810,6 +820,17 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 self.appendEncodingLogLine(line)
             }
+        }
+    }
+
+    private var selectedVideoEncoder: FFmpegEncoder.VideoEncoder {
+        switch encodeSpeedMode {
+        case .fastestHardware:
+            return .hardwareH264
+        case .fastSoftware:
+            return .softwareFastH264
+        case .quality:
+            return .softwareQualityH264
         }
     }
 

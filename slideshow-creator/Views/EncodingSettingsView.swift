@@ -22,6 +22,14 @@ struct EncodingSettingsView: View {
             )
             .frame(width: 180)
 
+            Picker("Mode", selection: $model.encodeSpeedMode) {
+                ForEach(EncodeSpeedMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 170)
+
             LabeledIntField(label: "W", value: $model.width)
             LabeledIntField(label: "H", value: $model.height)
             LabeledIntField(label: "FPS", value: $model.fps)
