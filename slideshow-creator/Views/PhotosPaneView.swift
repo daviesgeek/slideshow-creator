@@ -152,11 +152,13 @@ struct PhotosPaneView: View {
 
                 Color.clear
                     .frame(height: 20)
-                    .overlay(alignment: .top) {
+                    .overlay(alignment: .leading) {
                         if isGridDroppingAtEnd {
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(Color.accentColor)
-                                .frame(height: 3)
+                                .frame(width: 3)
+                                .padding(.vertical, 2)
+                                .padding(.leading, 2)
                         }
                     }
                     .onDrop(

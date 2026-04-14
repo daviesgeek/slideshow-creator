@@ -68,13 +68,13 @@ struct PhotoGridCellView: View {
         }
         .padding(10)
         .background(cardBackground)
-        .overlay(alignment: .top) {
+        .overlay(alignment: .leading) {
             if isDropTarget {
                 RoundedRectangle(cornerRadius: 3)
                     .fill(Color.accentColor)
-                    .frame(height: 3)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 2)
+                    .frame(width: 3)
+                    .padding(.vertical, 8)
+                    .padding(.leading, 2)
             }
         }
         .overlay(
