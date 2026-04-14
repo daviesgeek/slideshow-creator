@@ -32,6 +32,24 @@ struct EncodingProgressWindowView: View {
 
             Divider()
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("FFmpeg Log")
+                    .font(.subheadline.weight(.semibold))
+
+                ScrollView {
+                    Text(model.encodingLogText.isEmpty ? "Waiting for ffmpeg output…" : model.encodingLogText)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                }
+                .frame(minHeight: 140, maxHeight: 200)
+                .background(.quaternary.opacity(0.35))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            Divider()
+
             HStack {
                 Spacer()
 

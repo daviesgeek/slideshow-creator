@@ -39,6 +39,7 @@ final class AppModel: ObservableObject {
     @Published var encodingStatusLine: String = "Idle"
     @Published var encodingElapsedText: String = "00:00"
     @Published var encodingRemainingText: String = "Estimating…"
+    @Published var encodingLogText: String = ""
     @Published private(set) var hasUnsavedChanges = false
 
     @Published var secondsPerImage: Double = 3
@@ -57,6 +58,7 @@ final class AppModel: ObservableObject {
     private var isPerformingProgrammaticUpdate = false
     private var cancellables: Set<AnyCancellable> = []
     private var encodingTask: Task<Void, Never>?
+    private var encodingTickerTask: Task<Void, Never>?
     private var encodeStartDate: Date?
 
     private let allowedImageExtensions = Set([
@@ -716,39 +718,52 @@ final class AppModel: ObservableObject {
 
     private func encode(to outputURL: URL, items: [PhotoItem]) async {
         resetEncodingProgress()
+        startEncodingTicker()
         isEncoding = true
         isEncodingWindowPresented = true
         status = "Encoding..."
         defer {
             isEncoding = false
             encodingTask = nil
+            stopEncodingTicker()
         }
 
         do {
             let ffmpegURL = try resolveFFmpegURL()
-            let output = try await FFmpegEncoder.run(
+            let output = try await runEncodingPass(
                 ffmpegURL: ffmpegURL,
                 items: items,
-                soundtracks: soundtracks,
                 outputURL: outputURL,
-                secondsPerImage: secondsPerImage,
-                width: width,
-                height: height,
-                fps: fps
-            ) { [weak self] progress, statusLine in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.encodingProgress = progress
-                    self.encodingStatusLine = statusLine
-                    self.updateEncodingTimeLabels(progress: progress)
-                }
-            }
+                videoEncoder: .hardwareH264
+            )
 
             encodingProgress = 1
             encodingStatusLine = "Complete"
             encodingRemainingText = "00:00"
             status = output
         } catch {
+            if case AppError.ffmpegFailed(let output) = error,
+               output.localizedCaseInsensitiveContains("h264_videotoolbox") {
+                do {
+                    status = "Hardware encoder unavailable. Falling back to software fast mode…"
+                    let ffmpegURL = try resolveFFmpegURL()
+                    let fallbackOutput = try await runEncodingPass(
+                        ffmpegURL: ffmpegURL,
+                        items: items,
+                        outputURL: outputURL,
+                        videoEncoder: .softwareFastH264
+                    )
+
+                    encodingProgress = 1
+                    encodingStatusLine = "Complete"
+                    encodingRemainingText = "00:00"
+                    status = fallbackOutput
+                    return
+                } catch {
+                    // Fall through to standard error handling below.
+                }
+            }
+
             if error is CancellationError {
                 encodingStatusLine = "Cancelled"
                 encodingRemainingText = "00:00"
@@ -767,8 +782,41 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func runEncodingPass(
+        ffmpegURL: URL,
+        items: [PhotoItem],
+        outputURL: URL,
+        videoEncoder: FFmpegEncoder.VideoEncoder
+    ) async throws -> String {
+        try await FFmpegEncoder.run(
+            ffmpegURL: ffmpegURL,
+            items: items,
+            soundtracks: soundtracks,
+            outputURL: outputURL,
+            secondsPerImage: secondsPerImage,
+            width: width,
+            height: height,
+            fps: fps,
+            videoEncoder: videoEncoder
+        ) { [weak self] progress, statusLine in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.encodingProgress = progress
+                self.encodingStatusLine = statusLine
+                self.updateEncodingTimeLabels(progress: progress)
+            }
+        } onLogLine: { [weak self] line in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.appendEncodingLogLine(line)
+            }
+        }
+    }
+
     func cancelEncoding() {
         guard isEncoding else { return }
+        encodingStatusLine = "Cancelling…"
+        status = "Cancelling…"
         encodingTask?.cancel()
     }
 
@@ -782,6 +830,40 @@ final class AppModel: ObservableObject {
         encodingStatusLine = "Starting…"
         encodingElapsedText = "00:00"
         encodingRemainingText = "Estimating…"
+        encodingLogText = ""
+    }
+
+    private func appendEncodingLogLine(_ line: String) {
+        let cappedLine = line.count > 500 ? String(line.prefix(500)) + "…" : line
+        if encodingLogText.isEmpty {
+            encodingLogText = cappedLine
+        } else {
+            encodingLogText += "\n" + cappedLine
+        }
+
+        // Keep the log window responsive by capping retained text size.
+        let maxCharacters = 30_000
+        if encodingLogText.count > maxCharacters {
+            encodingLogText = String(encodingLogText.suffix(maxCharacters))
+        }
+    }
+
+    private func startEncodingTicker() {
+        encodingTickerTask?.cancel()
+        encodingTickerTask = Task { [weak self] in
+            while let self, !Task.isCancelled {
+                await MainActor.run {
+                    self.updateEncodingTimeLabels(progress: self.encodingProgress)
+                }
+
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func stopEncodingTicker() {
+        encodingTickerTask?.cancel()
+        encodingTickerTask = nil
     }
 
     private func updateEncodingTimeLabels(progress: Double) {

@@ -1,6 +1,11 @@
 import Foundation
 
 enum FFmpegEncoder {
+    enum VideoEncoder {
+        case hardwareH264
+        case softwareFastH264
+    }
+
     nonisolated static func run(
         ffmpegURL: URL,
         items: [PhotoItem],
@@ -10,11 +15,14 @@ enum FFmpegEncoder {
         width: Int,
         height: Int,
         fps: Int,
-        onProgress: @escaping @Sendable (_ progress: Double, _ statusLine: String) -> Void
+        videoEncoder: VideoEncoder,
+        onProgress: @escaping @Sendable (_ progress: Double, _ statusLine: String) -> Void,
+        onLogLine: @escaping @Sendable (_ line: String) -> Void
     ) async throws -> String {
-        final class CancellationState {
+        final class CancellationState: @unchecked Sendable {
             let lock = NSLock()
             var process: Process?
+            var didRequestCancellation = false
         }
 
         let totalDuration = max(0.001, Double(items.count) * secondsPerImage)
@@ -61,7 +69,8 @@ enum FFmpegEncoder {
                     secondsPerImage: secondsPerImage,
                     width: width,
                     height: height,
-                    fps: fps
+                    fps: fps,
+                    videoEncoder: videoEncoder
                 )
                 process.standardOutput = stdoutPipe
                 process.standardError = progressPipe
@@ -84,6 +93,7 @@ enum FFmpegEncoder {
                             partialLine = String(partialLine[newlineRange.upperBound...])
 
                             guard !line.isEmpty else { continue }
+                            onLogLine(line)
 
                             if line.hasPrefix("out_time=") {
                                 let timecode = String(line.dropFirst("out_time=".count))
@@ -102,7 +112,13 @@ enum FFmpegEncoder {
                             rawOutput += String(decoding: remainingData, as: UTF8.self)
                         }
 
-                        if process.terminationStatus == 0 {
+                        cancellationState.lock.lock()
+                        let didRequestCancellation = cancellationState.didRequestCancellation
+                        cancellationState.lock.unlock()
+
+                        if didRequestCancellation {
+                            complete(.failure(AppError.encodingCancelled))
+                        } else if process.terminationStatus == 0 {
                             onProgress(1, "Finishing…")
                             complete(.success("Done: \(outputURL.path)"))
                         } else if process.terminationReason == .uncaughtSignal && process.terminationStatus == SIGTERM {
@@ -122,10 +138,19 @@ enum FFmpegEncoder {
         } onCancel: {
             cancellationState.lock.lock()
             let process = cancellationState.process
+            cancellationState.didRequestCancellation = true
             cancellationState.lock.unlock()
 
             if let process, process.isRunning {
+                process.interrupt()
                 process.terminate()
+
+                // Last-resort hard kill if ffmpeg ignores terminate.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                    if process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
+                    }
+                }
             }
         }
     }
@@ -137,11 +162,13 @@ enum FFmpegEncoder {
         secondsPerImage: Double,
         width: Int,
         height: Int,
-        fps: Int
+        fps: Int,
+        videoEncoder: VideoEncoder
     ) -> [String] {
         let slideshowDuration = Double(items.count) * secondsPerImage
+        let targetVideoBitrate = recommendedVideoBitrate(width: width, height: height, fps: fps)
 
-        var args: [String] = ["-y", "-progress", "pipe:2", "-nostats"]
+        var args: [String] = ["-y", "-hide_banner", "-progress", "pipe:2", "-nostats", "-sws_flags", "fast_bilinear"]
 
         for item in items {
             args += [
@@ -189,9 +216,27 @@ enum FFmpegEncoder {
         args += [
             "-filter_complex", filterParts.joined(separator: ";"),
             "-map", "[v]",
-            "-r", "\(fps)",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
+            "-r", "\(fps)"
+        ]
+
+        switch videoEncoder {
+        case .hardwareH264:
+            args += [
+                "-c:v", "h264_videotoolbox",
+                "-b:v", targetVideoBitrate,
+                "-pix_fmt", "yuv420p"
+            ]
+        case .softwareFastH264:
+            args += [
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "28",
+                "-threads", "0",
+                "-pix_fmt", "yuv420p"
+            ]
+        }
+
+        args += [
             "-movflags", "+faststart"
         ]
 
@@ -217,5 +262,22 @@ enum FFmpegEncoder {
         let seconds = Double(parts[2]) ?? 0
 
         return (hours * 3600) + (minutes * 60) + seconds
+    }
+
+    nonisolated private static func recommendedVideoBitrate(width: Int, height: Int, fps: Int) -> String {
+        let pixelsPerSecond = width * height * max(fps, 1)
+
+        switch pixelsPerSecond {
+        case ...27_648_000: // up to 1280x720 @ 30 fps
+            return "4M"
+        case ...62_208_000: // up to 1920x1080 @ 30 fps
+            return "8M"
+        case ...124_416_000: // up to 1920x1080 @ 60 fps
+            return "12M"
+        case ...221_184_000: // up to 2560x1440 @ 60 fps
+            return "20M"
+        default: // 4K and above
+            return "30M"
+        }
     }
 }
