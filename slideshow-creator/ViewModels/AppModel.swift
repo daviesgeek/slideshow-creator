@@ -38,9 +38,26 @@ final class AppModel: ObservableObject {
         }
     }
 
+    enum PhotosExclusionFilter: String, CaseIterable, Identifiable {
+        case all
+        case included
+        case excluded
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .all: return "All"
+            case .included: return "Included"
+            case .excluded: return "Excluded"
+            }
+        }
+    }
+
     private static let defaultFFmpegPath = "/opt/homebrew/bin/ffmpeg"
     private static let ffmpegPathDefaultsKey = "globalFFmpegPath"
     private static let photosViewModeDefaultsKey = "photosViewMode"
+    private static let photosExclusionFilterDefaultsKey = "photosExclusionFilter"
     private static let photosSoundtracksSplitRatioDefaultsKey = "photosSoundtracksSplitRatio"
     private static let photosGridCellWidthDefaultsKey = "photosGridCellWidth"
     private static let lastProjectBookmarkDefaultsKey = "lastOpenedProjectBookmark"
@@ -54,9 +71,15 @@ final class AppModel: ObservableObject {
     @Published var soundtracks: [SoundtrackItem] = []
     @Published var selectedPhotoID: PhotoItem.ID?
     @Published var selectedPhotoIDs: Set<PhotoItem.ID> = []
+    @Published var selectionAnchorPhotoID: PhotoItem.ID?
     @Published var photosViewMode: PhotosViewMode {
         didSet {
             UserDefaults.standard.set(photosViewMode.rawValue, forKey: Self.photosViewModeDefaultsKey)
+        }
+    }
+    @Published var photosExclusionFilter: PhotosExclusionFilter {
+        didSet {
+            UserDefaults.standard.set(photosExclusionFilter.rawValue, forKey: Self.photosExclusionFilterDefaultsKey)
         }
     }
     @Published var photosSoundtracksSplitRatio: Double {
@@ -140,6 +163,13 @@ final class AppModel: ObservableObject {
             photosViewMode = .list
         }
 
+        if let storedFilter = defaults.string(forKey: Self.photosExclusionFilterDefaultsKey),
+           let filter = PhotosExclusionFilter(rawValue: storedFilter) {
+            photosExclusionFilter = filter
+        } else {
+            photosExclusionFilter = .all
+        }
+
         if defaults.object(forKey: Self.photosSoundtracksSplitRatioDefaultsKey) != nil {
             photosSoundtracksSplitRatio = Self.clampSplitRatio(
                 defaults.double(forKey: Self.photosSoundtracksSplitRatioDefaultsKey)
@@ -177,7 +207,7 @@ final class AppModel: ObservableObject {
     }
 
     func newProject() {
-        guard confirmPendingChangesIfNeeded() else { return }
+        guard confirmProjectSavedIfNeeded(before: "starting a new project") else { return }
 
         performProgrammaticUpdate {
             stopAllSecurityScopedAccess()
@@ -223,7 +253,7 @@ final class AppModel: ObservableObject {
     }
 
     func openProject() {
-        guard confirmPendingChangesIfNeeded() else { return }
+        guard confirmProjectSavedIfNeeded(before: "opening another project") else { return }
 
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
@@ -237,10 +267,12 @@ final class AppModel: ObservableObject {
     }
 
     func canCloseWindow() -> Bool {
-        confirmPendingChangesIfNeeded()
+        confirmProjectSavedIfNeeded(before: "closing")
     }
 
     func pickFolder() {
+        guard confirmProjectSavedIfNeeded(before: "changing the photos folder") else { return }
+
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -294,6 +326,8 @@ final class AppModel: ObservableObject {
     }
 
     func pickSoundtrackFolder() {
+        guard confirmProjectSavedIfNeeded(before: "changing the soundtrack folder") else { return }
+
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -705,17 +739,17 @@ final class AppModel: ObservableObject {
         hasUnsavedChanges = true
     }
 
-    private func confirmPendingChangesIfNeeded() -> Bool {
-        guard hasUnsavedChanges else { return true }
+    private func confirmProjectSavedIfNeeded(before actionDescription: String) -> Bool {
+        guard requiresSavingBeforeMajorAction else { return true }
 
-        switch promptForPendingChanges() {
+        switch promptToSaveBeforeMajorAction(actionDescription: actionDescription) {
         case .save:
             if currentProjectURL == nil {
                 saveProjectAs()
             } else {
                 saveProject()
             }
-            return !hasUnsavedChanges
+            return !requiresSavingBeforeMajorAction
         case .discard:
             return true
         case .cancel:
@@ -723,11 +757,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func promptForPendingChanges() -> PendingUserDecision {
+    private var requiresSavingBeforeMajorAction: Bool {
+        hasUnsavedChanges || currentProjectURL == nil
+    }
+
+    private func promptToSaveBeforeMajorAction(actionDescription: String) -> PendingUserDecision {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Do you want to save changes to this project before closing?"
-        alert.informativeText = "If you don’t save, your recent project changes will be lost."
+        alert.messageText = "Do you want to save this project before \(actionDescription)?"
+        if hasUnsavedChanges {
+            alert.informativeText = "If you don’t save, your recent project changes will be lost."
+        } else {
+            alert.informativeText = "This project has not been saved yet."
+        }
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Don’t Save")
         alert.addButton(withTitle: "Cancel")
@@ -818,9 +860,21 @@ final class AppModel: ObservableObject {
         Array(availableFlags.prefix(9))
     }
 
+    var filteredPhotoItems: [PhotoItem] {
+        switch photosExclusionFilter {
+        case .all:
+            return items
+        case .included:
+            return items.filter { !$0.isExcluded }
+        case .excluded:
+            return items.filter { $0.isExcluded }
+        }
+    }
+
     func selectPhoto(_ id: PhotoItem.ID?) {
         selectedPhotoID = id
         selectedPhotoIDs = id.map { [$0] } ?? []
+        selectionAnchorPhotoID = id
     }
 
     func selectPhotos(_ ids: Set<PhotoItem.ID>) {
@@ -829,10 +883,50 @@ final class AppModel: ObservableObject {
         selectedPhotoIDs = normalized
 
         if let selectedPhotoID, normalized.contains(selectedPhotoID) {
+            selectionAnchorPhotoID = selectedPhotoID
             return
         }
 
         selectedPhotoID = items.first(where: { normalized.contains($0.id) })?.id
+        selectionAnchorPhotoID = selectedPhotoID
+    }
+
+    func togglePhotoSelection(_ id: PhotoItem.ID) {
+        let availableIDs = Set(items.map(\.id))
+        guard availableIDs.contains(id) else { return }
+
+        if selectedPhotoIDs.contains(id) {
+            var updatedSelection = selectedPhotoIDs
+            updatedSelection.remove(id)
+            selectedPhotoIDs = updatedSelection
+            selectedPhotoID = selectedPhotoID == id ? updatedSelection.first : selectedPhotoID
+        } else {
+            selectedPhotoIDs.insert(id)
+            selectedPhotoID = id
+            selectionAnchorPhotoID = id
+        }
+
+        if selectedPhotoIDs.isEmpty {
+            selectedPhotoID = nil
+            selectionAnchorPhotoID = nil
+        } else if selectionAnchorPhotoID == nil {
+            selectionAnchorPhotoID = selectedPhotoID
+        }
+    }
+
+    func extendPhotoSelection(to id: PhotoItem.ID, orderedIDs: [PhotoItem.ID]) {
+        guard let targetIndex = orderedIDs.firstIndex(of: id) else { return }
+        let anchorID = selectionAnchorPhotoID ?? selectedPhotoID ?? id
+        guard let anchorIndex = orderedIDs.firstIndex(of: anchorID) else {
+            selectPhoto(id)
+            return
+        }
+
+        let lowerBound = min(anchorIndex, targetIndex)
+        let upperBound = max(anchorIndex, targetIndex)
+        selectedPhotoIDs = Set(orderedIDs[lowerBound ... upperBound])
+        selectedPhotoID = id
+        selectionAnchorPhotoID = anchorID
     }
 
     func toggleExcludeForSelectedPhoto() {
@@ -1001,6 +1095,8 @@ final class AppModel: ObservableObject {
     }
 
     func chooseOutputAndEncode() {
+        guard confirmProjectSavedIfNeeded(before: "encoding") else { return }
+
         guard !items.isEmpty else {
             status = "Nothing to encode."
             return

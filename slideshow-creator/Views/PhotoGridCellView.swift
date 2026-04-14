@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PhotoGridCellView: View {
     let item: PhotoItem
@@ -7,7 +8,7 @@ struct PhotoGridCellView: View {
     let isDropTarget: Bool
     let thumbnailHeight: CGFloat
     let thumbnailMaxPixelSize: CGFloat
-    let onSelect: () -> Void
+    let onSelect: (NSEvent.ModifierFlags) -> Void
     let onThumbnailTap: () -> Void
     let onExcludeToggle: (Bool) -> Void
     let onFlagToggle: (String, Bool) -> Void
@@ -15,14 +16,11 @@ struct PhotoGridCellView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button(action: onThumbnailTap) {
-                ThumbnailView(url: item.url, maxPixelSize: thumbnailMaxPixelSize)
-                    .frame(height: thumbnailHeight)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-            .onDrag(dragProvider)
-            .help("Drag to reorder")
+            ThumbnailView(url: item.url, maxPixelSize: thumbnailMaxPixelSize)
+                .frame(height: thumbnailHeight)
+                .frame(maxWidth: .infinity)
+                .onDrag(dragProvider)
+                .help("Drag to reorder")
 
             Text(item.name)
                 .font(.callout.weight(.medium))
@@ -55,7 +53,10 @@ struct PhotoGridCellView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .opacity(item.isExcluded ? 0.45 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture(perform: onSelect)
+        .onTapGesture(count: 2, perform: onThumbnailTap)
+        .onTapGesture {
+            onSelect(NSApp.currentEvent?.modifierFlags ?? [])
+        }
     }
 
     private var cardBackground: some ShapeStyle {

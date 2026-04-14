@@ -4,7 +4,7 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @State private var isPreviewPresented = false
-    @State private var previewIndex = 0
+    @State private var previewedPhotoID: PhotoItem.ID?
     @State private var newFlagName = ""
     private let leftPaneMinWidth: CGFloat = 480
     private let rightPaneMinWidth: CGFloat = 320
@@ -14,13 +14,21 @@ struct ContentView: View {
             VStack(spacing: 12) {
                 ProjectToolbarView(model: model)
 
-                if let projectURL = model.currentProjectURL {
-                    Text("Project: \(projectURL.path)")
+                HStack(spacing: 8) {
+                    Text(projectDisplayText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                         .lineLimit(1)
                         .textSelection(.enabled)
+
+                    if needsSaveIndicator {
+                        Label("Unsaved", systemImage: "circle.fill")
+                            .font(.caption2.weight(.semibold))
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(.orange)
+                    }
+
+                    Spacer(minLength: 0)
                 }
 
                 EncodingSettingsView(model: model)
@@ -32,7 +40,7 @@ struct ContentView: View {
                     minLeftWidth: leftPaneMinWidth,
                     minRightWidth: rightPaneMinWidth
                 ) {
-                    PhotosPaneView(model: model) { item in
+                    PhotosPaneView(model: model, isKeyboardNavigationEnabled: !isPreviewPresented) { item in
                         openPreview(for: item)
                     }
                     .frame(minWidth: leftPaneMinWidth, maxWidth: .infinity, maxHeight: .infinity)
@@ -50,22 +58,26 @@ struct ContentView: View {
             .padding()
             .frame(minWidth: 900, minHeight: 600)
             .background(WindowCloseGuard(model: model))
+            .disabled(isPreviewPresented)
+            .allowsHitTesting(!isPreviewPresented)
 
             if isPreviewPresented {
                 FullscreenPhotoPreview(
-                    items: model.items,
+                    items: model.filteredPhotoItems,
                     shortcutFlags: model.shortcutFlags,
-                    currentIndex: $previewIndex,
+                    currentIndex: previewIndexBinding,
                     onToggleExclude: { id in
+                        let previousItems = model.filteredPhotoItems
+                        let previousIndex = currentPreviewIndex(in: previousItems)
                         model.toggleExclude(for: id)
+                        updatePreviewAfterFilteringChange(previousItems: previousItems, previousIndex: previousIndex)
                     },
                     onToggleFlag: { number, id in
                         model.toggleShortcutFlag(number, for: id)
                     },
                     onClose: {
-                        let clampedIndex = min(max(previewIndex, 0), model.items.count - 1)
-                        if model.items.indices.contains(clampedIndex) {
-                            model.selectPhoto(model.items[clampedIndex].id)
+                        if let previewedPhotoID {
+                            model.selectPhoto(previewedPhotoID)
                         }
                         isPreviewPresented = false
                     }
@@ -82,8 +94,58 @@ struct ContentView: View {
     }
 
     private func openPreview(for item: PhotoItem) {
-        guard let index = model.items.firstIndex(of: item) else { return }
-        previewIndex = index
+        guard model.filteredPhotoItems.contains(item) else { return }
+        previewedPhotoID = item.id
         isPreviewPresented = true
+    }
+
+    private var previewIndexBinding: Binding<Int> {
+        Binding(
+            get: {
+                guard let previewedPhotoID else { return 0 }
+                return model.filteredPhotoItems.firstIndex(where: { $0.id == previewedPhotoID }) ?? 0
+            },
+            set: { newIndex in
+                guard model.filteredPhotoItems.indices.contains(newIndex) else { return }
+                previewedPhotoID = model.filteredPhotoItems[newIndex].id
+            }
+        )
+    }
+
+    private func currentPreviewIndex(in items: [PhotoItem]) -> Int {
+        guard let previewedPhotoID,
+              let index = items.firstIndex(where: { $0.id == previewedPhotoID }) else {
+            return 0
+        }
+        return index
+    }
+
+    private func updatePreviewAfterFilteringChange(previousItems: [PhotoItem], previousIndex: Int) {
+        let newItems = model.filteredPhotoItems
+
+        if let previewedPhotoID, newItems.contains(where: { $0.id == previewedPhotoID }) {
+            return
+        }
+
+        guard !newItems.isEmpty else {
+            previewedPhotoID = nil
+            isPreviewPresented = false
+            return
+        }
+
+        let fallbackIndex = min(max(0, previousIndex), newItems.count - 1)
+        previewedPhotoID = newItems[fallbackIndex].id
+    }
+
+    private var projectDisplayText: String {
+        if let projectURL = model.currentProjectURL {
+            return "Project: \(projectURL.path)"
+        }
+
+        return "Project: Not saved yet"
+    }
+
+    private var needsSaveIndicator: Bool {
+        model.hasUnsavedChanges || model.currentProjectURL == nil
     }
 }

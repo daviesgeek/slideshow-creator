@@ -1,31 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 struct PhotosPaneView: View {
-    private enum ExclusionFilter: String, CaseIterable, Identifiable {
-        case all
-        case included
-        case excluded
-
-        var id: Self { self }
-
-        var title: String {
-            switch self {
-            case .all: return "All"
-            case .included: return "Included"
-            case .excluded: return "Excluded"
-            }
-        }
-    }
-
     @ObservedObject var model: AppModel
+    let isKeyboardNavigationEnabled: Bool
     let onThumbnailTap: (PhotoItem) -> Void
 
     @State private var draggedPhotoID: PhotoItem.ID?
     @State private var gridDropTargetID: PhotoItem.ID?
     @State private var isGridDroppingAtEnd = false
     @State private var gridAvailableWidth: CGFloat = 0
-    @State private var exclusionFilter: ExclusionFilter = .all
 
     private var selectedPhotoIDs: Set<PhotoItem.ID> { model.selectedPhotoIDs }
     private var visibleSelectedPhotoIDs: Set<PhotoItem.ID> {
@@ -56,14 +41,7 @@ struct PhotosPaneView: View {
     }
 
     private var filteredItems: [PhotoItem] {
-        switch exclusionFilter {
-        case .all:
-            return model.items
-        case .included:
-            return model.items.filter { !$0.isExcluded }
-        case .excluded:
-            return model.items.filter { $0.isExcluded }
-        }
+        model.filteredPhotoItems
     }
 
     private func keyEquivalent(for number: Int) -> KeyEquivalent {
@@ -93,7 +71,10 @@ struct PhotosPaneView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear(perform: syncSelectionToFilter)
-        .onChange(of: exclusionFilter) { _, _ in
+        .onChange(of: model.photosExclusionFilter) { _, _ in
+            syncSelectionToFilter()
+        }
+        .onChange(of: model.items) { _, _ in
             syncSelectionToFilter()
         }
     }
@@ -112,8 +93,8 @@ struct PhotosPaneView: View {
             .labelsHidden()
             .frame(width: 150)
 
-            Picker("Filter", selection: $exclusionFilter) {
-                ForEach(ExclusionFilter.allCases) { filter in
+            Picker("Filter", selection: $model.photosExclusionFilter) {
+                ForEach(AppModel.PhotosExclusionFilter.allCases) { filter in
                     Text(filter.title).tag(filter)
                 }
             }
@@ -199,7 +180,9 @@ struct PhotosPaneView: View {
                             isDropTarget: gridDropTargetID == item.id,
                             thumbnailHeight: gridThumbnailHeight,
                             thumbnailMaxPixelSize: gridThumbnailMaxPixelSize,
-                            onSelect: { model.selectPhoto(item.id) },
+                            onSelect: { modifiers in
+                                handleGridSelection(for: item.id, modifiers: modifiers)
+                            },
                             onThumbnailTap: {
                                 model.selectPhoto(item.id)
                                 onThumbnailTap(item)
@@ -320,7 +303,7 @@ struct PhotosPaneView: View {
                 .frame(width: 0, height: 0)
             }
 
-            if model.photosViewMode == .grid {
+            if model.photosViewMode == .grid && isKeyboardNavigationEnabled {
                 Button("Grid Left") {
                     moveGridSelection(horizontalDelta: -1)
                 }
@@ -376,6 +359,18 @@ struct PhotosPaneView: View {
         let movement = horizontalDelta + (verticalDelta * gridColumnCount)
         let targetIndex = min(max(0, currentIndex + movement), filteredItems.count - 1)
         model.selectPhoto(filteredItems[targetIndex].id)
+    }
+
+    private func handleGridSelection(for id: PhotoItem.ID, modifiers: NSEvent.ModifierFlags) {
+        let orderedIDs = filteredItems.map(\.id)
+
+        if modifiers.contains(.shift) {
+            model.extendPhotoSelection(to: id, orderedIDs: orderedIDs)
+        } else if modifiers.contains(.command) {
+            model.togglePhotoSelection(id)
+        } else {
+            model.selectPhoto(id)
+        }
     }
 
     private func scrollGridSelectionIntoView(with proxy: ScrollViewProxy, animated: Bool = true) {

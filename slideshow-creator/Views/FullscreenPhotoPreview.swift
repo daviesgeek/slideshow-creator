@@ -9,6 +9,8 @@ struct FullscreenPhotoPreview: View {
     let onToggleFlag: (Int, PhotoItem.ID) -> Void
     let onClose: () -> Void
 
+    @FocusState private var isFocused: Bool
+
     private var hasItems: Bool { !items.isEmpty }
 
     private var safeIndex: Int {
@@ -69,11 +71,9 @@ struct FullscreenPhotoPreview: View {
 
                     HStack(spacing: 12) {
                         Button("Previous", action: goPrevious)
-                            .keyboardShortcut(.leftArrow, modifiers: [])
                             .disabled(!canGoPrevious)
 
                         Button("Next", action: goNext)
-                            .keyboardShortcut(.rightArrow, modifiers: [])
                             .disabled(!canGoNext)
 
                         Button(item.isExcluded ? "Include (X)" : "Exclude (X)") {
@@ -134,9 +134,15 @@ struct FullscreenPhotoPreview: View {
                 }
             }
         }
+        .background(PreviewFirstResponderView())
+        .focusable()
+        .focused($isFocused)
         .onAppear {
             guard hasItems else { return }
             currentIndex = safeIndex
+            DispatchQueue.main.async {
+                isFocused = true
+            }
         }
         .onMoveCommand { direction in
             switch direction {
@@ -158,5 +164,25 @@ struct FullscreenPhotoPreview: View {
                 .background(.regularMaterial, in: Circle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct PreviewFirstResponderView: NSViewRepresentable {
+    func makeNSView(context _: Context) -> NSView {
+        let view = FirstResponderView()
+        DispatchQueue.main.async {
+            view.window?.makeFirstResponder(view)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context _: Context) {
+        DispatchQueue.main.async {
+            nsView.window?.makeFirstResponder(nsView)
+        }
+    }
+
+    private final class FirstResponderView: NSView {
+        override var acceptsFirstResponder: Bool { true }
     }
 }
