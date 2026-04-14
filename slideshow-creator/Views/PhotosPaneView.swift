@@ -2,6 +2,22 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct PhotosPaneView: View {
+    private enum ExclusionFilter: String, CaseIterable, Identifiable {
+        case all
+        case included
+        case excluded
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .all: return "All"
+            case .included: return "Included"
+            case .excluded: return "Excluded"
+            }
+        }
+    }
+
     @ObservedObject var model: AppModel
     let onThumbnailTap: (PhotoItem) -> Void
 
@@ -9,9 +25,13 @@ struct PhotosPaneView: View {
     @State private var gridDropTargetID: PhotoItem.ID?
     @State private var isGridDroppingAtEnd = false
     @State private var gridAvailableWidth: CGFloat = 0
+    @State private var exclusionFilter: ExclusionFilter = .all
 
     private var selectedPhotoIDs: Set<PhotoItem.ID> { model.selectedPhotoIDs }
-    private var selectedPhotoCount: Int { selectedPhotoIDs.count }
+    private var visibleSelectedPhotoIDs: Set<PhotoItem.ID> {
+        selectedPhotoIDs.intersection(Set(filteredItems.map(\.id)))
+    }
+    private var selectedPhotoCount: Int { visibleSelectedPhotoIDs.count }
     private var hasSelection: Bool { selectedPhotoCount > 0 }
     private let gridMinCellWidth: CGFloat = 120
     private let gridMaxCellWidth: CGFloat = 280
@@ -33,6 +53,17 @@ struct PhotosPaneView: View {
 
     private var gridCellWidth: CGFloat {
         CGFloat(model.photosGridCellWidth)
+    }
+
+    private var filteredItems: [PhotoItem] {
+        switch exclusionFilter {
+        case .all:
+            return model.items
+        case .included:
+            return model.items.filter { !$0.isExcluded }
+        case .excluded:
+            return model.items.filter { $0.isExcluded }
+        }
     }
 
     private func keyEquivalent(for number: Int) -> KeyEquivalent {
@@ -61,6 +92,10 @@ struct PhotosPaneView: View {
             keyboardShortcuts
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear(perform: syncSelectionToFilter)
+        .onChange(of: exclusionFilter) { _, _ in
+            syncSelectionToFilter()
+        }
     }
 
     private var header: some View {
@@ -76,6 +111,15 @@ struct PhotosPaneView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(width: 150)
+
+            Picker("Filter", selection: $exclusionFilter) {
+                ForEach(ExclusionFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 210)
 
             if model.photosViewMode == .grid {
                 HStack(spacing: 6) {
@@ -107,11 +151,11 @@ struct PhotosPaneView: View {
         }, set: { newValue in
             model.selectPhotos(newValue)
         })) {
-            ForEach(model.items) { item in
+            ForEach(filteredItems) { item in
                 PhotoRow(
                     item: item,
                     shortcutFlags: model.shortcutFlags,
-                    isSelected: model.selectedPhotoIDs.contains(item.id),
+                    isSelected: visibleSelectedPhotoIDs.contains(item.id),
                     dragProvider: {
                         draggedPhotoID = item.id
                         return NSItemProvider(object: item.id.uuidString as NSString)
@@ -147,11 +191,11 @@ struct PhotosPaneView: View {
                 .frame(height: 0)
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: gridCellWidth), spacing: gridSpacing)], spacing: gridSpacing) {
-                    ForEach(model.items) { item in
+                    ForEach(filteredItems) { item in
                         PhotoGridCellView(
                             item: item,
                             shortcutFlags: model.shortcutFlags,
-                            isSelected: model.selectedPhotoIDs.contains(item.id),
+                            isSelected: visibleSelectedPhotoIDs.contains(item.id),
                             isDropTarget: gridDropTargetID == item.id,
                             thumbnailHeight: gridThumbnailHeight,
                             thumbnailMaxPixelSize: gridThumbnailMaxPixelSize,
@@ -227,16 +271,16 @@ struct PhotosPaneView: View {
 
             Group {
                 Button("Top") {
-                    model.moveSelectedPhotosToTop(selectedPhotoIDs)
+                    model.moveSelectedPhotosToTop(visibleSelectedPhotoIDs)
                 }
                 Button("Up") {
-                    model.moveSelectedPhotosUp(selectedPhotoIDs)
+                    model.moveSelectedPhotosUp(visibleSelectedPhotoIDs)
                 }
                 Button("Down") {
-                    model.moveSelectedPhotosDown(selectedPhotoIDs)
+                    model.moveSelectedPhotosDown(visibleSelectedPhotoIDs)
                 }
                 Button("Bottom") {
-                    model.moveSelectedPhotosToBottom(selectedPhotoIDs)
+                    model.moveSelectedPhotosToBottom(visibleSelectedPhotoIDs)
                 }
             }
             .disabled(!hasSelection)
@@ -245,12 +289,12 @@ struct PhotosPaneView: View {
                 .frame(height: 14)
 
             Button("Include") {
-                model.setPhotosExcluded(false, for: selectedPhotoIDs)
+                model.setPhotosExcluded(false, for: visibleSelectedPhotoIDs)
             }
             .disabled(!hasSelection)
 
             Button("Exclude") {
-                model.setPhotosExcluded(true, for: selectedPhotoIDs)
+                model.setPhotosExcluded(true, for: visibleSelectedPhotoIDs)
             }
             .disabled(!hasSelection)
         }
@@ -312,10 +356,10 @@ struct PhotosPaneView: View {
     private func handleListInsert(at index: Int, itemProviders _: [NSItemProvider]) {
         guard let draggedPhotoID else { return }
 
-        if index >= model.items.count {
+        if index >= filteredItems.count {
             model.movePhotoToEnd(withID: draggedPhotoID)
         } else {
-            model.movePhoto(withID: draggedPhotoID, before: model.items[index].id)
+            model.movePhoto(withID: draggedPhotoID, before: filteredItems[index].id)
         }
 
         self.draggedPhotoID = nil
@@ -323,15 +367,15 @@ struct PhotosPaneView: View {
 
     private func moveGridSelection(horizontalDelta: Int = 0, verticalDelta: Int = 0) {
         guard model.photosViewMode == .grid else { return }
-        guard !model.items.isEmpty else { return }
+        guard !filteredItems.isEmpty else { return }
 
         let currentIndex = model.selectedPhotoID.flatMap { selectedID in
-            model.items.firstIndex(where: { $0.id == selectedID })
+            filteredItems.firstIndex(where: { $0.id == selectedID })
         } ?? 0
 
         let movement = horizontalDelta + (verticalDelta * gridColumnCount)
-        let targetIndex = min(max(0, currentIndex + movement), model.items.count - 1)
-        model.selectPhoto(model.items[targetIndex].id)
+        let targetIndex = min(max(0, currentIndex + movement), filteredItems.count - 1)
+        model.selectPhoto(filteredItems[targetIndex].id)
     }
 
     private func scrollGridSelectionIntoView(with proxy: ScrollViewProxy, animated: Bool = true) {
@@ -345,6 +389,21 @@ struct PhotosPaneView: View {
             withAnimation(.easeInOut(duration: 0.12), action)
         } else {
             action()
+        }
+    }
+
+    private func syncSelectionToFilter() {
+        let visibleIDs = Set(filteredItems.map(\.id))
+        let updatedSelection = model.selectedPhotoIDs.intersection(visibleIDs)
+
+        if updatedSelection != model.selectedPhotoIDs {
+            if updatedSelection.isEmpty {
+                model.selectPhoto(filteredItems.first?.id)
+            } else {
+                model.selectPhotos(updatedSelection)
+            }
+        } else if updatedSelection.isEmpty, model.selectedPhotoID == nil {
+            model.selectPhoto(filteredItems.first?.id)
         }
     }
 }
