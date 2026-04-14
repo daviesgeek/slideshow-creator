@@ -41,6 +41,8 @@ final class AppModel: ObservableObject {
     private static let defaultFFmpegPath = "/opt/homebrew/bin/ffmpeg"
     private static let ffmpegPathDefaultsKey = "globalFFmpegPath"
     private static let photosViewModeDefaultsKey = "photosViewMode"
+    private static let photosSoundtracksSplitRatioDefaultsKey = "photosSoundtracksSplitRatio"
+    private static let photosGridCellWidthDefaultsKey = "photosGridCellWidth"
     private static let lastProjectBookmarkDefaultsKey = "lastOpenedProjectBookmark"
     private static let lastProjectPathDefaultsKey = "lastOpenedProjectPath"
 
@@ -55,6 +57,22 @@ final class AppModel: ObservableObject {
     @Published var photosViewMode: PhotosViewMode {
         didSet {
             UserDefaults.standard.set(photosViewMode.rawValue, forKey: Self.photosViewModeDefaultsKey)
+        }
+    }
+    @Published var photosSoundtracksSplitRatio: Double {
+        didSet {
+            UserDefaults.standard.set(
+                Self.clampSplitRatio(photosSoundtracksSplitRatio),
+                forKey: Self.photosSoundtracksSplitRatioDefaultsKey
+            )
+        }
+    }
+    @Published var photosGridCellWidth: Double {
+        didSet {
+            UserDefaults.standard.set(
+                Self.clampGridCellWidth(photosGridCellWidth),
+                forKey: Self.photosGridCellWidthDefaultsKey
+            )
         }
     }
     @Published var availableFlags: [String] = []
@@ -122,6 +140,22 @@ final class AppModel: ObservableObject {
             photosViewMode = .list
         }
 
+        if defaults.object(forKey: Self.photosSoundtracksSplitRatioDefaultsKey) != nil {
+            photosSoundtracksSplitRatio = Self.clampSplitRatio(
+                defaults.double(forKey: Self.photosSoundtracksSplitRatioDefaultsKey)
+            )
+        } else {
+            photosSoundtracksSplitRatio = 0.62
+        }
+
+        if defaults.object(forKey: Self.photosGridCellWidthDefaultsKey) != nil {
+            photosGridCellWidth = Self.clampGridCellWidth(
+                defaults.double(forKey: Self.photosGridCellWidthDefaultsKey)
+            )
+        } else {
+            photosGridCellWidth = 170
+        }
+
         configureDirtyTracking()
 
         switch restoreLastOpenedProject() {
@@ -132,6 +166,14 @@ final class AppModel: ObservableObject {
         case .notConfigured:
             break
         }
+    }
+
+    private static func clampSplitRatio(_ value: Double) -> Double {
+        min(0.9, max(0.1, value))
+    }
+
+    private static func clampGridCellWidth(_ value: Double) -> Double {
+        min(280, max(120, value))
     }
 
     func newProject() {

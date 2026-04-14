@@ -9,7 +9,6 @@ struct PhotosPaneView: View {
     @State private var gridDropTargetID: PhotoItem.ID?
     @State private var isGridDroppingAtEnd = false
     @State private var gridAvailableWidth: CGFloat = 0
-    @State private var gridCellWidth: CGFloat = 170
 
     private var selectedPhotoIDs: Set<PhotoItem.ID> { model.selectedPhotoIDs }
     private var selectedPhotoCount: Int { selectedPhotoIDs.count }
@@ -26,6 +25,10 @@ struct PhotosPaneView: View {
 
     private var gridThumbnailHeight: CGFloat {
         max(90, gridCellWidth * gridThumbnailHeightScale)
+    }
+
+    private var gridCellWidth: CGFloat {
+        CGFloat(model.photosGridCellWidth)
     }
 
     private func keyEquivalent(for number: Int) -> KeyEquivalent {
@@ -76,7 +79,7 @@ struct PhotosPaneView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Slider(value: $gridCellWidth, in: gridMinCellWidth ... gridMaxCellWidth)
+                    Slider(value: $model.photosGridCellWidth, in: Double(gridMinCellWidth) ... Double(gridMaxCellWidth))
                         .frame(width: 150)
                         .help("Grid tile size")
 
