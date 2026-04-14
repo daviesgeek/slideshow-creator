@@ -10,6 +10,8 @@ import SwiftData
 
 @main
 struct slideshow_creatorApp: App {
+    @StateObject private var appModel = AppModel()
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,
@@ -26,6 +28,7 @@ struct slideshow_creatorApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(appModel)
         }
         .modelContainer(sharedModelContainer)
     }

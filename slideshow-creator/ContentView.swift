@@ -15,8 +15,30 @@ import UniformTypeIdentifiers
 struct PhotoItem: Identifiable, Equatable {
     let id = UUID()
     let url: URL
+    var isExcluded = false
+    var flags: Set<String> = []
+
+    init(url: URL, isExcluded: Bool = false, flags: Set<String> = []) {
+        self.url = url
+        self.isExcluded = isExcluded
+        self.flags = flags
+    }
 
     var name: String { url.lastPathComponent }
+}
+
+enum FlagMatchMode: String, Codable, CaseIterable, Identifiable {
+    case any
+    case all
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .any: return "Any"
+        case .all: return "All"
+        }
+    }
 }
 
 struct SoundtrackItem: Identifiable, Equatable {
@@ -30,6 +52,9 @@ enum AppError: LocalizedError {
     case ffmpegNotFound
     case ffmpegFailed(String)
     case noImages
+    case noExportableImages
+    case projectSaveFailed(String)
+    case projectLoadFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -39,17 +64,51 @@ enum AppError: LocalizedError {
             return "FFmpeg failed:\n\(output)"
         case .noImages:
             return "No supported images found in the selected folder."
+        case .noExportableImages:
+            return "No exportable photos match your exclude/flag filters."
+        case .projectSaveFailed(let message):
+            return "Could not save project: \(message)"
+        case .projectLoadFailed(let message):
+            return "Could not open project: \(message)"
         }
     }
+}
+
+private struct ProjectSettings: Codable {
+    let secondsPerImage: Double
+    let width: Int
+    let height: Int
+    let fps: Int
+    let ffmpegPath: String
+}
+
+private struct SlideshowProjectDocument: Codable {
+    let version: Int
+    let photosFolderPath: String?
+    let soundtrackFolderPath: String?
+    let photosFolderBookmark: Data?
+    let soundtrackFolderBookmark: Data?
+    let photoOrder: [String]
+    let soundtrackOrder: [String]
+    let settings: ProjectSettings
+    let availableFlags: [String]?
+    let selectedExportFlags: [String]?
+    let exportMatchMode: String?
+    let photoExcludedByName: [String: Bool]?
+    let photoFlagsByName: [String: [String]]?
 }
 
 @MainActor
 final class AppModel: ObservableObject {
     @Published var folderURL: URL?
     @Published var soundtrackFolderURL: URL?
+    @Published var currentProjectURL: URL?
 
     @Published var items: [PhotoItem] = []
     @Published var soundtracks: [SoundtrackItem] = []
+    @Published var availableFlags: [String] = []
+    @Published var selectedExportFlags: Set<String> = []
+    @Published var exportMatchMode: FlagMatchMode = .any
 
     @Published var status: String = "Choose a folder to begin."
     @Published var isEncoding = false
@@ -62,6 +121,8 @@ final class AppModel: ObservableObject {
     // Default for Apple Silicon Homebrew. The resolver also checks other common paths.
     @Published var ffmpegPath: String = "/opt/homebrew/bin/ffmpeg"
 
+    private var activeSecurityScopedURLs: Set<URL> = []
+
     private let allowedImageExtensions = Set([
         "jpg", "jpeg", "png", "webp", "heic", "heif", "tif", "tiff"
     ])
@@ -69,6 +130,62 @@ final class AppModel: ObservableObject {
     private let allowedAudioExtensions = Set([
         "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac"
     ])
+
+    private var projectFileType: UTType {
+        UTType(filenameExtension: "slideshowproject") ?? .json
+    }
+
+    func newProject() {
+        stopAllSecurityScopedAccess()
+
+        folderURL = nil
+        soundtrackFolderURL = nil
+        currentProjectURL = nil
+        items = []
+        soundtracks = []
+        availableFlags = []
+        selectedExportFlags = []
+        exportMatchMode = .any
+
+        secondsPerImage = 3
+        width = 1920
+        height = 1080
+        fps = 30
+        ffmpegPath = "/opt/homebrew/bin/ffmpeg"
+
+        status = "Started a new project."
+    }
+
+    func saveProject() {
+        guard let currentProjectURL else {
+            saveProjectAs()
+            return
+        }
+
+        saveProject(to: currentProjectURL)
+    }
+
+    func saveProjectAs() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [projectFileType]
+        panel.nameFieldStringValue = "slideshow.slideshowproject"
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        saveProject(to: url)
+    }
+
+    func openProject() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [projectFileType, .json]
+        panel.prompt = "Open Project"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        loadProject(from: url)
+    }
 
     func pickFolder() {
         let panel = NSOpenPanel()
@@ -78,6 +195,7 @@ final class AppModel: ObservableObject {
         panel.prompt = "Choose Folder"
 
         guard panel.runModal() == .OK, let folder = panel.url else { return }
+        startSecurityScopedAccess(for: folder)
         loadFolder(folder)
     }
 
@@ -93,6 +211,8 @@ final class AppModel: ObservableObject {
                 .filter { allowedImageExtensions.contains($0.pathExtension.lowercased()) }
                 .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
 
+            let existingByName = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0) })
+
             guard !imageURLs.isEmpty else {
                 folderURL = folder
                 items = []
@@ -101,7 +221,13 @@ final class AppModel: ObservableObject {
             }
 
             folderURL = folder
-            items = imageURLs.map(PhotoItem.init(url:))
+            items = imageURLs.map { url in
+                let name = url.lastPathComponent
+                if let existing = existingByName[name] {
+                    return PhotoItem(url: url, isExcluded: existing.isExcluded, flags: existing.flags)
+                }
+                return PhotoItem(url: url)
+            }
             status = "Loaded \(items.count) images."
         } catch {
             status = error.localizedDescription
@@ -116,6 +242,7 @@ final class AppModel: ObservableObject {
         panel.prompt = "Choose Folder"
 
         guard panel.runModal() == .OK, let folder = panel.url else { return }
+        startSecurityScopedAccess(for: folder)
         loadSoundtrackFolder(folder)
     }
 
@@ -132,7 +259,7 @@ final class AppModel: ObservableObject {
                 .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
 
             soundtrackFolderURL = folder
-            soundtracks = audioURLs.map(SoundtrackItem.init(url:))
+            soundtracks = audioURLs.map { SoundtrackItem(url: $0) }
 
             if soundtracks.isEmpty {
                 status = "No supported audio files found in selected soundtrack folder."
@@ -144,6 +271,222 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func saveProject(to url: URL) {
+        do {
+            let document = try buildProjectDocument()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(document)
+
+            try data.write(to: url, options: .atomic)
+            currentProjectURL = url
+            status = "Saved project: \(url.lastPathComponent)"
+        } catch {
+            status = AppError.projectSaveFailed(error.localizedDescription).localizedDescription
+        }
+    }
+
+    private func loadProject(from url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            let document = try JSONDecoder().decode(SlideshowProjectDocument.self, from: data)
+
+            stopAllSecurityScopedAccess()
+
+            secondsPerImage = document.settings.secondsPerImage
+            width = document.settings.width
+            height = document.settings.height
+            fps = document.settings.fps
+            ffmpegPath = document.settings.ffmpegPath
+            availableFlags = (document.availableFlags ?? []).sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+            selectedExportFlags = Set(document.selectedExportFlags ?? [])
+            exportMatchMode = FlagMatchMode(rawValue: document.exportMatchMode ?? "any") ?? .any
+
+            if let photosFolder = resolveFolderForProject(
+                bookmarkData: document.photosFolderBookmark,
+                fallbackPath: document.photosFolderPath,
+                roleName: "photos"
+            ) {
+                loadFolder(photosFolder)
+                reorderPhotos(using: document.photoOrder)
+                applyPhotoMetadata(
+                    excludedByName: document.photoExcludedByName ?? [:],
+                    flagsByName: document.photoFlagsByName ?? [:]
+                )
+            } else {
+                folderURL = nil
+                items = []
+            }
+
+            if let soundtrackFolder = resolveFolderForProject(
+                bookmarkData: document.soundtrackFolderBookmark,
+                fallbackPath: document.soundtrackFolderPath,
+                roleName: "soundtracks"
+            ) {
+                loadSoundtrackFolder(soundtrackFolder)
+                reorderSoundtracks(using: document.soundtrackOrder)
+            } else {
+                soundtrackFolderURL = nil
+                soundtracks = []
+            }
+
+            currentProjectURL = url
+            status = "Opened project: \(url.lastPathComponent)"
+        } catch {
+            status = AppError.projectLoadFailed(error.localizedDescription).localizedDescription
+        }
+    }
+
+    private func buildProjectDocument() throws -> SlideshowProjectDocument {
+        let photosBookmark = try folderURL?.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        let soundtrackBookmark = try soundtrackFolderURL?.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        return SlideshowProjectDocument(
+            version: 1,
+            photosFolderPath: folderURL?.path,
+            soundtrackFolderPath: soundtrackFolderURL?.path,
+            photosFolderBookmark: photosBookmark,
+            soundtrackFolderBookmark: soundtrackBookmark,
+            photoOrder: items.map(\.name),
+            soundtrackOrder: soundtracks.map(\.name),
+            settings: ProjectSettings(
+                secondsPerImage: secondsPerImage,
+                width: width,
+                height: height,
+                fps: fps,
+                ffmpegPath: ffmpegPath
+            ),
+            availableFlags: availableFlags,
+            selectedExportFlags: Array(selectedExportFlags),
+            exportMatchMode: exportMatchMode.rawValue,
+            photoExcludedByName: Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.isExcluded) }),
+            photoFlagsByName: Dictionary(uniqueKeysWithValues: items.map { ($0.name, Array($0.flags)) })
+        )
+    }
+
+    private func resolveFolderForProject(
+        bookmarkData: Data?,
+        fallbackPath: String?,
+        roleName: String
+    ) -> URL? {
+        if let bookmarkData,
+           let bookmarkedURL = resolveBookmarkURL(bookmarkData),
+           folderExists(at: bookmarkedURL) {
+            startSecurityScopedAccess(for: bookmarkedURL)
+            return bookmarkedURL
+        }
+
+        if let fallbackPath {
+            let fallbackURL = URL(fileURLWithPath: fallbackPath)
+            if folderExists(at: fallbackURL) {
+                startSecurityScopedAccess(for: fallbackURL)
+                return fallbackURL
+            }
+        }
+
+        return promptForFolderRelink(roleName: roleName)
+    }
+
+    private func resolveBookmarkURL(_ data: Data) -> URL? {
+        var isStale = false
+        return try? URL(
+            resolvingBookmarkData: data,
+            options: [.withSecurityScope],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    }
+
+    private func folderExists(at url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    private func promptForFolderRelink(roleName: String) -> URL? {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn’t find the \(roleName) folder"
+        alert.informativeText = "Select a new \(roleName) folder to relink this project, or skip it for now."
+        alert.addButton(withTitle: "Relink Folder")
+        alert.addButton(withTitle: "Skip")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Relink"
+
+        guard panel.runModal() == .OK, let relinkedURL = panel.url else { return nil }
+        startSecurityScopedAccess(for: relinkedURL)
+        return relinkedURL
+    }
+
+    private func reorderPhotos(using savedOrder: [String]) {
+        guard !savedOrder.isEmpty else { return }
+
+        let byName = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0) })
+        let ordered = savedOrder.compactMap { byName[$0] }
+        let leftovers = items.filter { !savedOrder.contains($0.name) }
+        items = ordered + leftovers
+    }
+
+    private func reorderSoundtracks(using savedOrder: [String]) {
+        guard !savedOrder.isEmpty else { return }
+
+        let byName = Dictionary(uniqueKeysWithValues: soundtracks.map { ($0.name, $0) })
+        let ordered = savedOrder.compactMap { byName[$0] }
+        let leftovers = soundtracks.filter { !savedOrder.contains($0.name) }
+        soundtracks = ordered + leftovers
+    }
+
+    private func applyPhotoMetadata(
+        excludedByName: [String: Bool],
+        flagsByName: [String: [String]]
+    ) {
+        for index in items.indices {
+            let name = items[index].name
+            items[index].isExcluded = excludedByName[name] ?? false
+            items[index].flags = Set(flagsByName[name] ?? [])
+        }
+
+        if availableFlags.isEmpty {
+            let discoveredFlags = Set(items.flatMap { $0.flags })
+            availableFlags = Array(discoveredFlags).sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+        }
+
+        selectedExportFlags = selectedExportFlags.intersection(Set(availableFlags))
+    }
+
+    private func startSecurityScopedAccess(for url: URL) {
+        guard !activeSecurityScopedURLs.contains(url) else { return }
+
+        if url.startAccessingSecurityScopedResource() {
+            activeSecurityScopedURLs.insert(url)
+        }
+    }
+
+    private func stopAllSecurityScopedAccess() {
+        for url in activeSecurityScopedURLs {
+            url.stopAccessingSecurityScopedResource()
+        }
+        activeSecurityScopedURLs.removeAll()
+    }
+
     func move(from source: IndexSet, to destination: Int) {
         items.move(fromOffsets: source, toOffset: destination)
     }
@@ -152,9 +495,71 @@ final class AppModel: ObservableObject {
         soundtracks.move(fromOffsets: source, toOffset: destination)
     }
 
+    func addFlag(_ rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        guard !availableFlags.contains(name) else { return }
+
+        availableFlags.append(name)
+        availableFlags.sort { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    func removeFlag(_ flag: String) {
+        availableFlags.removeAll { $0 == flag }
+        selectedExportFlags.remove(flag)
+
+        for index in items.indices {
+            items[index].flags.remove(flag)
+        }
+    }
+
+    func setPhotoExcluded(_ isExcluded: Bool, for id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].isExcluded = isExcluded
+    }
+
+    func setFlag(_ flag: String, enabled: Bool, for id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+
+        if enabled {
+            items[index].flags.insert(flag)
+        } else {
+            items[index].flags.remove(flag)
+        }
+    }
+
+    func setExportFlagSelection(flag: String, isSelected: Bool) {
+        if isSelected {
+            selectedExportFlags.insert(flag)
+        } else {
+            selectedExportFlags.remove(flag)
+        }
+    }
+
+    var exportableItems: [PhotoItem] {
+        let included = items.filter { !$0.isExcluded }
+
+        guard !selectedExportFlags.isEmpty else { return included }
+
+        switch exportMatchMode {
+        case .any:
+            return included.filter { !$0.flags.isDisjoint(with: selectedExportFlags) }
+        case .all:
+            return included.filter { selectedExportFlags.isSubset(of: $0.flags) }
+        }
+    }
+
+    var exportableItemsCount: Int { exportableItems.count }
+
     func chooseOutputAndEncode() {
         guard !items.isEmpty else {
             status = "Nothing to encode."
+            return
+        }
+
+        let itemsToEncode = exportableItems
+        guard !itemsToEncode.isEmpty else {
+            status = AppError.noExportableImages.localizedDescription
             return
         }
 
@@ -165,11 +570,11 @@ final class AppModel: ObservableObject {
         guard panel.runModal() == .OK, let outputURL = panel.url else { return }
 
         Task {
-            await encode(to: outputURL)
+            await encode(to: outputURL, items: itemsToEncode)
         }
     }
 
-    private func encode(to outputURL: URL) async {
+    private func encode(to outputURL: URL, items: [PhotoItem]) async {
         isEncoding = true
         status = "Encoding..."
         defer { isEncoding = false }
@@ -346,27 +751,44 @@ enum FFmpegEncoder {
 // MARK: - UI
 
 struct ContentView: View {
-    @StateObject private var model = AppModel()
+    @EnvironmentObject private var model: AppModel
     @State private var isPreviewPresented = false
     @State private var previewIndex = 0
+    @State private var newFlagName = ""
 
     var body: some View {
         ZStack {
             VStack(spacing: 12) {
-                HStack {
-                    Button("Choose Photos Folder", action: model.pickFolder)
-                    Button("Choose Soundtrack Folder", action: model.pickSoundtrackFolder)
+            HStack {
+                Button("New Project", action: model.newProject)
+                Button("Open Project…", action: model.openProject)
+                Button("Save Project", action: model.saveProject)
+                Button("Save Project As…", action: model.saveProjectAs)
+
+                Divider()
+
+                Button("Choose Photos Folder", action: model.pickFolder)
+                Button("Choose Soundtrack Folder", action: model.pickSoundtrackFolder)
 
                     Button("Encode…", action: model.chooseOutputAndEncode)
                     .disabled(model.items.isEmpty || model.isEncoding)
 
                     Spacer()
 
-                    if model.isEncoding {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
+                if model.isEncoding {
+                    ProgressView()
+                        .controlSize(.small)
                 }
+            }
+
+            if let projectURL = model.currentProjectURL {
+                Text("Project: \(projectURL.path)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+            }
 
                 HStack(spacing: 12) {
                     TextField("FFmpeg path", text: $model.ffmpegPath)
@@ -384,6 +806,88 @@ struct ContentView: View {
                     LabeledIntField(label: "FPS", value: $model.fps)
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("Flags")
+                            .font(.headline)
+
+                        TextField("Add flag", text: $newFlagName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 220)
+
+                        Button("Add") {
+                            model.addFlag(newFlagName)
+                            newFlagName = ""
+                        }
+                        .disabled(newFlagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Divider()
+                            .frame(height: 16)
+
+                        Picker("Match", selection: $model.exportMatchMode) {
+                            ForEach(FlagMatchMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 160)
+
+                        Menu("Filter Flags (\(model.selectedExportFlags.count))") {
+                            if model.availableFlags.isEmpty {
+                                Text("No flags yet")
+                            }
+
+                            ForEach(model.availableFlags, id: \.self) { flag in
+                                Toggle(
+                                    isOn: Binding(
+                                        get: { model.selectedExportFlags.contains(flag) },
+                                        set: { isOn in
+                                            model.setExportFlagSelection(flag: flag, isSelected: isOn)
+                                        }
+                                    )
+                                ) {
+                                    Text(flag)
+                                }
+                            }
+
+                            if !model.selectedExportFlags.isEmpty {
+                                Divider()
+                                Button("Clear Selection") {
+                                    model.selectedExportFlags = []
+                                }
+                            }
+                        }
+
+                        Text("Will export \(model.exportableItemsCount) photos")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if !model.availableFlags.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(model.availableFlags, id: \.self) { flag in
+                                    HStack(spacing: 6) {
+                                        Text(flag)
+                                            .font(.caption)
+                                        Button {
+                                            model.removeFlag(flag)
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Remove flag")
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(.quaternary, in: Capsule())
+                                }
+                            }
+                        }
+                    }
+                }
+
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Photos")
@@ -399,9 +903,17 @@ struct ContentView: View {
 
                         List {
                             ForEach(model.items) { item in
-                                PhotoRow(item: item) {
-                                    openPreview(for: item)
-                                }
+                                PhotoRow(
+                                    item: item,
+                                    availableFlags: model.availableFlags,
+                                    onThumbnailTap: { openPreview(for: item) },
+                                    onExcludeToggle: { isExcluded in
+                                        model.setPhotoExcluded(isExcluded, for: item.id)
+                                    },
+                                    onFlagToggle: { flag, isEnabled in
+                                        model.setFlag(flag, enabled: isEnabled, for: item.id)
+                                    }
+                                )
                             }
                             .onMove(perform: model.move)
                         }
@@ -475,7 +987,10 @@ struct SoundtrackRow: View {
 
 struct PhotoRow: View {
     let item: PhotoItem
+    let availableFlags: [String]
     let onThumbnailTap: () -> Void
+    let onExcludeToggle: (Bool) -> Void
+    let onFlagToggle: (String, Bool) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -487,15 +1002,51 @@ struct PhotoRow: View {
             .help("Open fullscreen preview")
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.name)
-                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(item.name)
+                        .lineLimit(1)
+
+                    Toggle(
+                        "Exclude",
+                        isOn: Binding(
+                            get: { item.isExcluded },
+                            set: { onExcludeToggle($0) }
+                        )
+                    )
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+
+                    if !availableFlags.isEmpty {
+                        Menu("Flags") {
+                            ForEach(availableFlags, id: \.self) { flag in
+                                Toggle(
+                                    isOn: Binding(
+                                        get: { item.flags.contains(flag) },
+                                        set: { isOn in onFlagToggle(flag, isOn) }
+                                    )
+                                ) {
+                                    Text(flag)
+                                }
+                            }
+                        }
+                        .font(.caption)
+                    }
+                }
 
                 Text(item.url.path)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                if !item.flags.isEmpty {
+                    Text(item.flags.sorted().joined(separator: ", "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
+        .opacity(item.isExcluded ? 0.45 : 1)
         .padding(.vertical, 4)
     }
 }
