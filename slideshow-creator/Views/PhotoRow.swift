@@ -42,25 +42,12 @@ struct PhotoRow: View {
                     .help("Shortcut: X")
 
                     if !shortcutFlags.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(Array(shortcutFlags.enumerated()), id: \.offset) { index, flag in
-                                    let enabled = item.flags.contains(flag)
-                                    Button {
-                                        onFlagToggle(flag, !enabled)
-                                    } label: {
-                                        Text("\(index + 1) \(flag)")
-                                            .font(.caption2)
-                                            .lineLimit(1)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(enabled ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.18), in: Capsule())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Shortcut: \(index + 1)")
-                                }
-                            }
-                        }
+                        PhotoFlagControlsView(
+                            shortcutFlags: shortcutFlags,
+                            selectedFlags: item.flags,
+                            visibleFlagLimit: 4,
+                            onFlagToggle: onFlagToggle
+                        )
                     }
                 }
 

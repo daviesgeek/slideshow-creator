@@ -19,14 +19,6 @@ struct PhotoGridCellView: View {
                 ThumbnailView(url: item.url, maxPixelSize: thumbnailMaxPixelSize)
                     .frame(height: thumbnailHeight)
                     .frame(maxWidth: .infinity)
-                    .overlay(alignment: .topLeading) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(6)
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
-                            .padding(6)
-                    }
             }
             .buttonStyle(.plain)
             .onDrag(dragProvider)
@@ -36,36 +28,13 @@ struct PhotoGridCellView: View {
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
 
-            HStack(spacing: 8) {
-                Button(item.isExcluded ? "Include (X)" : "Exclude (X)") {
-                    onExcludeToggle(!item.isExcluded)
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-
-                Spacer(minLength: 0)
-            }
-
             if !shortcutFlags.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(shortcutFlags.enumerated()), id: \.offset) { index, flag in
-                            let enabled = item.flags.contains(flag)
-                            Button {
-                                onFlagToggle(flag, !enabled)
-                            } label: {
-                                Text("\(index + 1) \(flag)")
-                                    .font(.caption2)
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(enabled ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.18), in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Shortcut: \(index + 1)")
-                        }
-                    }
-                }
+                PhotoFlagControlsView(
+                    shortcutFlags: shortcutFlags,
+                    selectedFlags: item.flags,
+                    visibleFlagLimit: 3,
+                    onFlagToggle: onFlagToggle
+                )
             }
         }
         .padding(10)
