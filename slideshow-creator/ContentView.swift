@@ -347,89 +347,112 @@ enum FFmpegEncoder {
 
 struct ContentView: View {
     @StateObject private var model = AppModel()
+    @State private var isPreviewPresented = false
+    @State private var previewIndex = 0
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Button("Choose Photos Folder", action: model.pickFolder)
-                Button("Choose Soundtrack Folder", action: model.pickSoundtrackFolder)
+        ZStack {
+            VStack(spacing: 12) {
+                HStack {
+                    Button("Choose Photos Folder", action: model.pickFolder)
+                    Button("Choose Soundtrack Folder", action: model.pickSoundtrackFolder)
 
-                Button("Encode…", action: model.chooseOutputAndEncode)
-                .disabled(model.items.isEmpty || model.isEncoding)
+                    Button("Encode…", action: model.chooseOutputAndEncode)
+                    .disabled(model.items.isEmpty || model.isEncoding)
 
-                Spacer()
+                    Spacer()
 
-                if model.isEncoding {
-                    ProgressView()
-                        .controlSize(.small)
+                    if model.isEncoding {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                 }
+
+                HStack(spacing: 12) {
+                    TextField("FFmpeg path", text: $model.ffmpegPath)
+
+                    Stepper(
+                        "Seconds/photo: \(model.secondsPerImage, specifier: "%.1f")",
+                        value: $model.secondsPerImage,
+                        in: 1...30,
+                        step: 0.5
+                    )
+                    .frame(width: 180)
+
+                    LabeledIntField(label: "W", value: $model.width)
+                    LabeledIntField(label: "H", value: $model.height)
+                    LabeledIntField(label: "FPS", value: $model.fps)
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Photos")
+                            .font(.headline)
+
+                        if let folderURL = model.folderURL {
+                            Text(folderURL.path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .textSelection(.enabled)
+                        }
+
+                        List {
+                            ForEach(model.items) { item in
+                                PhotoRow(item: item) {
+                                    openPreview(for: item)
+                                }
+                            }
+                            .onMove(perform: model.move)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Soundtracks")
+                            .font(.headline)
+
+                        if let soundtrackFolderURL = model.soundtrackFolderURL {
+                            Text(soundtrackFolderURL.path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .textSelection(.enabled)
+                        }
+
+                        List {
+                            ForEach(model.soundtracks) { soundtrack in
+                                SoundtrackRow(item: soundtrack)
+                            }
+                            .onMove(perform: model.moveSoundtracks)
+                        }
+                    }
+                }
+
+
+                Text(model.status)
+                    .font(.callout.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
             }
+            .padding()
+            .frame(minWidth: 900, minHeight: 600)
 
-            HStack(spacing: 12) {
-                TextField("FFmpeg path", text: $model.ffmpegPath)
-
-                Stepper(
-                    "Seconds/photo: \(model.secondsPerImage, specifier: "%.1f")",
-                    value: $model.secondsPerImage,
-                    in: 1...30,
-                    step: 0.5
+            if isPreviewPresented {
+                FullscreenPhotoPreview(
+                    items: model.items,
+                    currentIndex: $previewIndex,
+                    onClose: { isPreviewPresented = false }
                 )
-                .frame(width: 180)
-
-                LabeledIntField(label: "W", value: $model.width)
-                LabeledIntField(label: "H", value: $model.height)
-                LabeledIntField(label: "FPS", value: $model.fps)
+                .transition(.opacity)
+                .zIndex(1)
             }
-
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Photos")
-                        .font(.headline)
-
-                    if let folderURL = model.folderURL {
-                        Text(folderURL.path)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .textSelection(.enabled)
-                    }
-
-                    List {
-                        ForEach(model.items) { item in
-                            PhotoRow(item: item)
-                        }
-                        .onMove(perform: model.move)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Soundtracks")
-                        .font(.headline)
-
-                    if let soundtrackFolderURL = model.soundtrackFolderURL {
-                        Text(soundtrackFolderURL.path)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .textSelection(.enabled)
-                    }
-
-                    List {
-                        ForEach(model.soundtracks) { soundtrack in
-                            SoundtrackRow(item: soundtrack)
-                        }
-                        .onMove(perform: model.moveSoundtracks)
-                    }
-                }
-            }
-
-            Text(model.status)
-                .font(.callout.monospaced())
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
         }
-        .padding()
-        .frame(minWidth: 900, minHeight: 600)
+    }
+
+    private func openPreview(for item: PhotoItem) {
+        guard let index = model.items.firstIndex(of: item) else { return }
+        previewIndex = index
+        isPreviewPresented = true
     }
 }
 
@@ -452,11 +475,16 @@ struct SoundtrackRow: View {
 
 struct PhotoRow: View {
     let item: PhotoItem
+    let onThumbnailTap: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            ThumbnailView(url: item.url)
-                .frame(width: 72, height: 72)
+            Button(action: onThumbnailTap) {
+                ThumbnailView(url: item.url)
+                    .frame(width: 72, height: 72)
+            }
+            .buttonStyle(.plain)
+            .help("Open fullscreen preview")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name)
@@ -469,6 +497,104 @@ struct PhotoRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+struct FullscreenPhotoPreview: View {
+    let items: [PhotoItem]
+    @Binding var currentIndex: Int
+    let onClose: () -> Void
+
+    private var hasItems: Bool { !items.isEmpty }
+
+    private var safeIndex: Int {
+        guard hasItems else { return 0 }
+        return min(max(currentIndex, 0), items.count - 1)
+    }
+
+    private var currentItem: PhotoItem? {
+        guard hasItems else { return nil }
+        return items[safeIndex]
+    }
+
+    private func goPrevious() {
+        currentIndex = max(0, safeIndex - 1)
+    }
+
+    private func goNext() {
+        currentIndex = min(items.count - 1, safeIndex + 1)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if let item = currentItem {
+                if let image = NSImage(contentsOf: item.url) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(40)
+                } else {
+                    Text("Unable to preview image")
+                        .foregroundStyle(.white)
+                }
+
+                VStack {
+                    Spacer()
+
+                    HStack(spacing: 12) {
+                        Button("Previous", action: goPrevious)
+                        .keyboardShortcut(.leftArrow, modifiers: [])
+                        .disabled(safeIndex == 0)
+
+                        Button("Next", action: goNext)
+                        .keyboardShortcut(.rightArrow, modifiers: [])
+                        .disabled(safeIndex == items.count - 1)
+
+                        Divider()
+                            .frame(height: 18)
+
+                        Text(item.url.path)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([item.url])
+                        } label: {
+                            Image(systemName: "arrow.up.forward")
+                        }
+                        .help("Reveal in Finder")
+
+                        Spacer(minLength: 0)
+
+                        Text("\(safeIndex + 1) / \(items.count)")
+                            .font(.caption.monospacedDigit())
+
+                        Button("Close", action: onClose)
+                            .keyboardShortcut(.escape, modifiers: [])
+                    }
+                    .padding(12)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
+                }
+            } else {
+                VStack(spacing: 10) {
+                    Text("No images to preview")
+                        .foregroundStyle(.white)
+                    Button("Close", action: onClose)
+                        .keyboardShortcut(.escape, modifiers: [])
+                }
+            }
+        }
+        .onAppear {
+            guard hasItems else { return }
+            currentIndex = safeIndex
+        }
     }
 }
 
