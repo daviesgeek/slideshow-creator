@@ -34,6 +34,11 @@ final class AppModel: ObservableObject {
 
     @Published var status: String = "Choose a folder to begin."
     @Published var isEncoding = false
+    @Published var isEncodingWindowPresented = false
+    @Published var encodingProgress: Double = 0
+    @Published var encodingStatusLine: String = "Idle"
+    @Published var encodingElapsedText: String = "00:00"
+    @Published var encodingRemainingText: String = "Estimating…"
     @Published private(set) var hasUnsavedChanges = false
 
     @Published var secondsPerImage: Double = 3
@@ -51,6 +56,8 @@ final class AppModel: ObservableObject {
     private var activeSecurityScopedURLs: Set<URL> = []
     private var isPerformingProgrammaticUpdate = false
     private var cancellables: Set<AnyCancellable> = []
+    private var encodingTask: Task<Void, Never>?
+    private var encodeStartDate: Date?
 
     private let allowedImageExtensions = Set([
         "jpg", "jpeg", "png", "webp", "heic", "heif", "tif", "tiff"
@@ -701,15 +708,21 @@ final class AppModel: ObservableObject {
 
         guard panel.runModal() == .OK, let outputURL = panel.url else { return }
 
-        Task {
-            await encode(to: outputURL, items: itemsToEncode)
+        encodingTask?.cancel()
+        encodingTask = Task { [weak self] in
+            await self?.encode(to: outputURL, items: itemsToEncode)
         }
     }
 
     private func encode(to outputURL: URL, items: [PhotoItem]) async {
+        resetEncodingProgress()
         isEncoding = true
+        isEncodingWindowPresented = true
         status = "Encoding..."
-        defer { isEncoding = false }
+        defer {
+            isEncoding = false
+            encodingTask = nil
+        }
 
         do {
             let ffmpegURL = try resolveFFmpegURL()
@@ -722,11 +735,82 @@ final class AppModel: ObservableObject {
                 width: width,
                 height: height,
                 fps: fps
-            )
+            ) { [weak self] progress, statusLine in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.encodingProgress = progress
+                    self.encodingStatusLine = statusLine
+                    self.updateEncodingTimeLabels(progress: progress)
+                }
+            }
+
+            encodingProgress = 1
+            encodingStatusLine = "Complete"
+            encodingRemainingText = "00:00"
             status = output
         } catch {
+            if error is CancellationError {
+                encodingStatusLine = "Cancelled"
+                encodingRemainingText = "00:00"
+                status = AppError.encodingCancelled.localizedDescription
+                return
+            }
+
+            if case AppError.encodingCancelled = error {
+                encodingStatusLine = "Cancelled"
+                encodingRemainingText = "00:00"
+            } else {
+                encodingStatusLine = "Failed"
+            }
+
             status = error.localizedDescription
         }
+    }
+
+    func cancelEncoding() {
+        guard isEncoding else { return }
+        encodingTask?.cancel()
+    }
+
+    func closeEncodingProgressWindow() {
+        isEncodingWindowPresented = false
+    }
+
+    private func resetEncodingProgress() {
+        encodeStartDate = Date()
+        encodingProgress = 0
+        encodingStatusLine = "Starting…"
+        encodingElapsedText = "00:00"
+        encodingRemainingText = "Estimating…"
+    }
+
+    private func updateEncodingTimeLabels(progress: Double) {
+        guard let encodeStartDate else { return }
+
+        let elapsed = Date().timeIntervalSince(encodeStartDate)
+        encodingElapsedText = Self.formatDuration(elapsed)
+
+        guard progress > 0.03 else {
+            encodingRemainingText = "Estimating…"
+            return
+        }
+
+        let expectedTotal = elapsed / progress
+        let remaining = max(0, expectedTotal - elapsed)
+        encodingRemainingText = "~\(Self.formatDuration(remaining))"
+    }
+
+    private static func formatDuration(_ interval: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(interval.rounded()))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+
+        return String(format: "%02d:%02d", minutes, seconds)
     }
 
     private func resolveFFmpegURL() throws -> URL {

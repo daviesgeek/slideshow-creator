@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @State private var isPreviewPresented = false
     @State private var previewIndex = 0
     @State private var newFlagName = ""
@@ -56,6 +57,11 @@ struct ContentView: View {
                 )
                 .transition(.opacity)
                 .zIndex(1)
+            }
+        }
+        .onChange(of: model.isEncodingWindowPresented) { _, isPresented in
+            if isPresented {
+                openWindow(id: "encoding-progress")
             }
         }
     }

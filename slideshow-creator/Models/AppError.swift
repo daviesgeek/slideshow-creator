@@ -3,6 +3,7 @@ import Foundation
 enum AppError: LocalizedError {
     case ffmpegNotFound
     case ffmpegFailed(String)
+    case encodingCancelled
     case noImages
     case noExportableImages
     case projectSaveFailed(String)
@@ -14,6 +15,8 @@ enum AppError: LocalizedError {
             return "FFmpeg not found. Set a valid path or install it with Homebrew."
         case .ffmpegFailed(let output):
             return "FFmpeg failed:\n\(output)"
+        case .encodingCancelled:
+            return "Encoding cancelled."
         case .noImages:
             return "No supported images found in the selected folder."
         case .noExportableImages:

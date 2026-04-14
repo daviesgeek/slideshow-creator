@@ -31,5 +31,11 @@ struct slideshow_creatorApp: App {
                 .environmentObject(appModel)
         }
         .modelContainer(sharedModelContainer)
+
+        Window("Encoding Progress", id: "encoding-progress") {
+            EncodingProgressWindowView()
+                .environmentObject(appModel)
+        }
+        .windowResizability(.contentSize)
     }
 }
