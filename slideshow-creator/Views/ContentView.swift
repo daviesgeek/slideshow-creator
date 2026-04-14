@@ -62,7 +62,13 @@ struct ContentView: View {
                     onToggleFlag: { number, id in
                         model.toggleShortcutFlag(number, for: id)
                     },
-                    onClose: { isPreviewPresented = false }
+                    onClose: {
+                        let clampedIndex = min(max(previewIndex, 0), model.items.count - 1)
+                        if model.items.indices.contains(clampedIndex) {
+                            model.selectPhoto(model.items[clampedIndex].id)
+                        }
+                        isPreviewPresented = false
+                    }
                 )
                 .transition(.opacity)
                 .zIndex(1)

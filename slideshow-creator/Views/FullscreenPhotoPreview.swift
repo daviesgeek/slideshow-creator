@@ -29,6 +29,14 @@ struct FullscreenPhotoPreview: View {
         currentIndex = min(items.count - 1, safeIndex + 1)
     }
 
+    private var canGoPrevious: Bool {
+        safeIndex > 0
+    }
+
+    private var canGoNext: Bool {
+        safeIndex < items.count - 1
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -45,17 +53,28 @@ struct FullscreenPhotoPreview: View {
                         .foregroundStyle(.white)
                 }
 
+                HStack {
+                    previewArrowButton(systemName: "chevron.left", action: goPrevious)
+                        .disabled(!canGoPrevious)
+
+                    Spacer()
+
+                    previewArrowButton(systemName: "chevron.right", action: goNext)
+                        .disabled(!canGoNext)
+                }
+                .padding(.horizontal, 24)
+
                 VStack {
                     Spacer()
 
                     HStack(spacing: 12) {
                         Button("Previous", action: goPrevious)
                             .keyboardShortcut(.leftArrow, modifiers: [])
-                            .disabled(safeIndex == 0)
+                            .disabled(!canGoPrevious)
 
                         Button("Next", action: goNext)
                             .keyboardShortcut(.rightArrow, modifiers: [])
-                            .disabled(safeIndex == items.count - 1)
+                            .disabled(!canGoNext)
 
                         Button(item.isExcluded ? "Include (X)" : "Exclude (X)") {
                             onToggleExclude(item.id)
@@ -119,5 +138,25 @@ struct FullscreenPhotoPreview: View {
             guard hasItems else { return }
             currentIndex = safeIndex
         }
+        .onMoveCommand { direction in
+            switch direction {
+            case .left:
+                if canGoPrevious { goPrevious() }
+            case .right:
+                if canGoNext { goNext() }
+            default:
+                break
+            }
+        }
+    }
+
+    private func previewArrowButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 24, weight: .semibold))
+                .frame(width: 48, height: 48)
+                .background(.regularMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
     }
 }
