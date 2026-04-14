@@ -9,16 +9,23 @@ struct PhotosPaneView: View {
     @State private var gridDropTargetID: PhotoItem.ID?
     @State private var isGridDroppingAtEnd = false
     @State private var gridAvailableWidth: CGFloat = 0
+    @State private var gridCellWidth: CGFloat = 170
 
     private var selectedPhotoIDs: Set<PhotoItem.ID> { model.selectedPhotoIDs }
     private var selectedPhotoCount: Int { selectedPhotoIDs.count }
     private var hasSelection: Bool { selectedPhotoCount > 0 }
-    private let gridMinimumCellWidth: CGFloat = 170
+    private let gridMinCellWidth: CGFloat = 120
+    private let gridMaxCellWidth: CGFloat = 280
     private let gridSpacing: CGFloat = 10
+    private let gridThumbnailHeightScale: CGFloat = 0.72
 
     private var gridColumnCount: Int {
-        let columns = Int((gridAvailableWidth + gridSpacing) / (gridMinimumCellWidth + gridSpacing))
+        let columns = Int((gridAvailableWidth + gridSpacing) / (gridCellWidth + gridSpacing))
         return max(1, columns)
+    }
+
+    private var gridThumbnailHeight: CGFloat {
+        max(90, gridCellWidth * gridThumbnailHeightScale)
     }
 
     private func keyEquivalent(for number: Int) -> KeyEquivalent {
@@ -62,6 +69,22 @@ struct PhotosPaneView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(width: 150)
+
+            if model.photosViewMode == .grid {
+                HStack(spacing: 6) {
+                    Image(systemName: "rectangle.grid.2x2")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Slider(value: $gridCellWidth, in: gridMinCellWidth ... gridMaxCellWidth)
+                        .frame(width: 150)
+                        .help("Grid tile size")
+
+                    Image(systemName: "rectangle.grid.1x2")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             Spacer()
 
@@ -115,13 +138,14 @@ struct PhotosPaneView: View {
             }
             .frame(height: 0)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimumCellWidth), spacing: gridSpacing)], spacing: gridSpacing) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridCellWidth), spacing: gridSpacing)], spacing: gridSpacing) {
                 ForEach(model.items) { item in
                     PhotoGridCellView(
                         item: item,
                         shortcutFlags: model.shortcutFlags,
                         isSelected: model.selectedPhotoIDs.contains(item.id),
                         isDropTarget: gridDropTargetID == item.id,
+                        thumbnailHeight: gridThumbnailHeight,
                         onSelect: { model.selectPhoto(item.id) },
                         onThumbnailTap: {
                             model.selectPhoto(item.id)

@@ -5,6 +5,7 @@ struct PhotoGridCellView: View {
     let shortcutFlags: [String]
     let isSelected: Bool
     let isDropTarget: Bool
+    let thumbnailHeight: CGFloat
     let onSelect: () -> Void
     let onThumbnailTap: () -> Void
     let onExcludeToggle: (Bool) -> Void
@@ -15,7 +16,7 @@ struct PhotoGridCellView: View {
         VStack(alignment: .leading, spacing: 8) {
             Button(action: onThumbnailTap) {
                 ThumbnailView(url: item.url)
-                    .frame(height: 120)
+                    .frame(height: thumbnailHeight)
                     .frame(maxWidth: .infinity)
                     .overlay(alignment: .topLeading) {
                         Image(systemName: "line.3.horizontal")
