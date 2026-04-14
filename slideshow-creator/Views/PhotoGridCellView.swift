@@ -15,14 +15,6 @@ struct PhotoGridCellView: View {
     let dragProvider: () -> NSItemProvider
 
     var body: some View {
-        ClickGestureView(
-            onClick: onSelect,
-            onDoubleClick: onThumbnailTap,
-            content: cellContent
-        )
-    }
-
-    private var cellContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             ThumbnailView(url: item.url, maxPixelSize: thumbnailMaxPixelSize)
                 .frame(height: thumbnailHeight)
@@ -60,6 +52,7 @@ struct PhotoGridCellView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .opacity(item.isExcluded ? 0.45 : 1)
+        .modifier(ClickGestureModifier(onClick: onSelect, onDoubleClick: onThumbnailTap))
     }
 
     private var cardBackground: some ShapeStyle {
@@ -70,73 +63,33 @@ struct PhotoGridCellView: View {
     }
 }
 
-private struct ClickGestureView<Content: View>: NSViewRepresentable {
+private struct ClickGestureModifier: ViewModifier {
     let onClick: (NSEvent.ModifierFlags) -> Void
     let onDoubleClick: () -> Void
-    let content: Content
 
-    func makeCoordinator() -> _Coordinator {
-        _Coordinator(onClick: onClick, onDoubleClick: onDoubleClick)
+    func body(content: Content) -> some View {
+        content
+            .background(ClickGestureView(onClick: onClick, onDoubleClick: onDoubleClick))
+    }
+}
+
+private struct ClickGestureView: NSViewRepresentable {
+    let onClick: (NSEvent.ModifierFlags) -> Void
+    let onDoubleClick: () -> Void
+
+    func makeNSView(context: Context) -> ClickTrackingView {
+        let view = ClickTrackingView()
+        view.onClick = onClick
+        view.onDoubleClick = onDoubleClick
+        return view
     }
 
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        container.wantsLayer = true
-
-        let hostingView = NSHostingView(rootView: content)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        hostingView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        hostingView.setContentHuggingPriority(.defaultLow, for: .vertical)
-        container.addSubview(hostingView)
-
-        let clickView = ClickTrackingView()
-        clickView.translatesAutoresizingMaskIntoConstraints = false
-        clickView.onClick = { flags in
-            context.coordinator.onClick(flags)
-        }
-        clickView.onDoubleClick = {
-            context.coordinator.onDoubleClick()
-        }
-        container.addSubview(clickView)
-
-        NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: container.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            clickView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            clickView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            clickView.topAnchor.constraint(equalTo: container.topAnchor),
-            clickView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-
-        return container
+    func updateNSView(_ nsView: ClickTrackingView, context: Context) {
+        nsView.onClick = onClick
+        nsView.onDoubleClick = onDoubleClick
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.onClick = onClick
-        context.coordinator.onDoubleClick = onDoubleClick
-        if let clickView = nsView.subviews.last as? ClickTrackingView {
-            clickView.onClick = { flags in
-                context.coordinator.onClick(flags)
-            }
-            clickView.onDoubleClick = {
-                context.coordinator.onDoubleClick()
-            }
-        }
-    }
-
-    final class _Coordinator {
-        var onClick: (NSEvent.ModifierFlags) -> Void
-        var onDoubleClick: () -> Void
-
-        init(onClick: @escaping (NSEvent.ModifierFlags) -> Void, onDoubleClick: @escaping () -> Void) {
-            self.onClick = onClick
-            self.onDoubleClick = onDoubleClick
-        }
-    }
-
-    private final class ClickTrackingView: NSView {
+    final class ClickTrackingView: NSView {
         var onClick: ((NSEvent.ModifierFlags) -> Void)?
         var onDoubleClick: (() -> Void)?
 
