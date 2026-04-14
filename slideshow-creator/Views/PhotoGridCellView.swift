@@ -52,11 +52,8 @@ struct PhotoGridCellView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .opacity(item.isExcluded ? 0.45 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture(count: 2, perform: onThumbnailTap)
-        .onTapGesture {
-            onSelect(NSApp.currentEvent?.modifierFlags ?? [])
-        }
+        .contentShape(Rectangle())
+        .background(ClickGestureView(onClick: onSelect, onDoubleClick: onThumbnailTap))
     }
 
     private var cardBackground: some ShapeStyle {
@@ -64,5 +61,50 @@ struct PhotoGridCellView: View {
             return AnyShapeStyle(Color.accentColor.opacity(0.12))
         }
         return AnyShapeStyle(Color.primary.opacity(0.04))
+    }
+}
+
+private struct ClickGestureView: NSViewRepresentable {
+    let onClick: (NSEvent.ModifierFlags) -> Void
+    let onDoubleClick: () -> Void
+
+    func makeNSView(context: Context) -> ClickTrackingView {
+        let view = ClickTrackingView()
+        view.onClick = onClick
+        view.onDoubleClick = onDoubleClick
+        return view
+    }
+
+    func updateNSView(_ nsView: ClickTrackingView, context: Context) {
+        nsView.onClick = onClick
+        nsView.onDoubleClick = onDoubleClick
+    }
+
+    final class ClickTrackingView: NSView {
+        var onClick: ((NSEvent.ModifierFlags) -> Void)?
+        var onDoubleClick: (() -> Void)?
+
+        override var acceptsFirstResponder: Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            // Let double-click be handled natively
+            if event.clickCount == 2 {
+                onDoubleClick?()
+            } else {
+                // Store event for use after potential drag recognition
+                // We call onClick on mouseUp to ensure drag doesn't fire first
+            }
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            if event.clickCount == 1 {
+                onClick?(event.modifierFlags)
+            }
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            // Still allow context menu via standard behavior if needed
+            mouseDown(with: event)
+        }
     }
 }
