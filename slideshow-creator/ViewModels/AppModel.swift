@@ -18,6 +18,12 @@ final class AppModel: ObservableObject {
         case needsRelink
     }
 
+    private enum LastProjectRestoreResult {
+        case notConfigured
+        case restored(URL)
+        case missingOrInvalid
+    }
+
     enum PhotosViewMode: String, CaseIterable, Identifiable {
         case list
         case grid
@@ -35,6 +41,8 @@ final class AppModel: ObservableObject {
     private static let defaultFFmpegPath = "/opt/homebrew/bin/ffmpeg"
     private static let ffmpegPathDefaultsKey = "globalFFmpegPath"
     private static let photosViewModeDefaultsKey = "photosViewMode"
+    private static let lastProjectBookmarkDefaultsKey = "lastOpenedProjectBookmark"
+    private static let lastProjectPathDefaultsKey = "lastOpenedProjectPath"
 
     @Published var folderURL: URL?
     @Published var soundtrackFolderURL: URL?
@@ -115,6 +123,15 @@ final class AppModel: ObservableObject {
         }
 
         configureDirtyTracking()
+
+        switch restoreLastOpenedProject() {
+        case .restored(let url):
+            loadProject(from: url)
+        case .missingOrInvalid:
+            clearLastOpenedProject()
+        case .notConfigured:
+            break
+        }
     }
 
     func newProject() {
@@ -284,6 +301,7 @@ final class AppModel: ObservableObject {
                 status = "Saved project: \(url.lastPathComponent)"
                 hasUnsavedChanges = false
             }
+            persistLastOpenedProject(url: url)
         } catch {
             status = AppError.projectSaveFailed(error.localizedDescription).localizedDescription
         }
@@ -374,9 +392,70 @@ final class AppModel: ObservableObject {
                 status = "Opened project: \(url.lastPathComponent)"
                 hasUnsavedChanges = false
             }
+            persistLastOpenedProject(url: url)
         } catch {
             status = AppError.projectLoadFailed(error.localizedDescription).localizedDescription
         }
+    }
+
+    private func restoreLastOpenedProject() -> LastProjectRestoreResult {
+        let defaults = UserDefaults.standard
+
+        if let bookmarkData = defaults.data(forKey: Self.lastProjectBookmarkDefaultsKey) {
+            var isStale = false
+            if let bookmarkedURL = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                let resolvedURL = bookmarkedURL.standardizedFileURL
+                if FileManager.default.fileExists(atPath: resolvedURL.path) {
+                    if isStale {
+                        persistLastOpenedProject(url: resolvedURL)
+                    }
+                    return .restored(resolvedURL)
+                }
+                return .missingOrInvalid
+            }
+
+            return .missingOrInvalid
+        }
+
+        if let path = defaults.string(forKey: Self.lastProjectPathDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !path.isEmpty {
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            if FileManager.default.fileExists(atPath: url.path) {
+                return .restored(url)
+            }
+            return .missingOrInvalid
+        }
+
+        return .notConfigured
+    }
+
+    private func persistLastOpenedProject(url: URL) {
+        let defaults = UserDefaults.standard
+        let normalizedURL = url.standardizedFileURL
+
+        defaults.set(normalizedURL.path, forKey: Self.lastProjectPathDefaultsKey)
+
+        if let bookmarkData = try? normalizedURL.bookmarkData(
+            options: [],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        ) {
+            defaults.set(bookmarkData, forKey: Self.lastProjectBookmarkDefaultsKey)
+        } else {
+            defaults.removeObject(forKey: Self.lastProjectBookmarkDefaultsKey)
+        }
+    }
+
+    private func clearLastOpenedProject() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: Self.lastProjectBookmarkDefaultsKey)
+        defaults.removeObject(forKey: Self.lastProjectPathDefaultsKey)
     }
 
     private func buildProjectDocument() throws -> SlideshowProjectDocument {
