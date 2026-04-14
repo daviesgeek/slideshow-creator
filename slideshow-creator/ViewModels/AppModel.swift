@@ -6,6 +6,18 @@ import SwiftUI
 
 @MainActor
 final class AppModel: ObservableObject {
+    private enum PendingUserDecision {
+        case save
+        case discard
+        case cancel
+    }
+
+    private enum FolderRestoreResult {
+        case notConfigured
+        case restored(URL)
+        case needsRelink
+    }
+
     private static let defaultFFmpegPath = "/opt/homebrew/bin/ffmpeg"
     private static let ffmpegPathDefaultsKey = "globalFFmpegPath"
 
@@ -21,6 +33,7 @@ final class AppModel: ObservableObject {
 
     @Published var status: String = "Choose a folder to begin."
     @Published var isEncoding = false
+    @Published private(set) var hasUnsavedChanges = false
 
     @Published var secondsPerImage: Double = 3
     @Published var width: Int = 1920
@@ -35,6 +48,8 @@ final class AppModel: ObservableObject {
     }
 
     private var activeSecurityScopedURLs: Set<URL> = []
+    private var isPerformingProgrammaticUpdate = false
+    private var cancellables: Set<AnyCancellable> = []
 
     private let allowedImageExtensions = Set([
         "jpg", "jpeg", "png", "webp", "heic", "heif", "tif", "tiff"
@@ -59,25 +74,32 @@ final class AppModel: ObservableObject {
             // Default for Apple Silicon Homebrew. The resolver also checks other common paths.
             ffmpegPath = Self.defaultFFmpegPath
         }
+
+        configureDirtyTracking()
     }
 
     func newProject() {
-        stopAllSecurityScopedAccess()
+        guard confirmPendingChangesIfNeeded() else { return }
 
-        folderURL = nil
-        soundtrackFolderURL = nil
-        currentProjectURL = nil
-        items = []
-        soundtracks = []
-        availableFlags = []
-        selectedExportFlags = []
-        exportMatchMode = .any
+        performProgrammaticUpdate {
+            stopAllSecurityScopedAccess()
 
-        secondsPerImage = 3
-        width = 1920
-        height = 1080
-        fps = 30
-        status = "Started a new project."
+            folderURL = nil
+            soundtrackFolderURL = nil
+            currentProjectURL = nil
+            items = []
+            soundtracks = []
+            availableFlags = []
+            selectedExportFlags = []
+            exportMatchMode = .any
+
+            secondsPerImage = 3
+            width = 1920
+            height = 1080
+            fps = 30
+            status = "Started a new project."
+            hasUnsavedChanges = false
+        }
     }
 
     func saveProject() {
@@ -100,6 +122,8 @@ final class AppModel: ObservableObject {
     }
 
     func openProject() {
+        guard confirmPendingChangesIfNeeded() else { return }
+
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -109,6 +133,10 @@ final class AppModel: ObservableObject {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         loadProject(from: url)
+    }
+
+    func canCloseWindow() -> Bool {
+        confirmPendingChangesIfNeeded()
     }
 
     func pickFolder() {
@@ -203,8 +231,11 @@ final class AppModel: ObservableObject {
             let data = try encoder.encode(document)
 
             try data.write(to: url, options: .atomic)
-            currentProjectURL = url
-            status = "Saved project: \(url.lastPathComponent)"
+            performProgrammaticUpdate {
+                currentProjectURL = url
+                status = "Saved project: \(url.lastPathComponent)"
+                hasUnsavedChanges = false
+            }
         } catch {
             status = AppError.projectSaveFailed(error.localizedDescription).localizedDescription
         }
@@ -215,56 +246,81 @@ final class AppModel: ObservableObject {
             let data = try Data(contentsOf: url)
             let document = try JSONDecoder().decode(SlideshowProjectDocument.self, from: data)
 
-            stopAllSecurityScopedAccess()
+            performProgrammaticUpdate {
+                stopAllSecurityScopedAccess()
 
-            secondsPerImage = document.settings.secondsPerImage
-            width = document.settings.width
-            height = document.settings.height
-            fps = document.settings.fps
-            // FFmpeg path is now global and persisted via UserDefaults.
-            // If this is the first run with no persisted value, migrate from legacy project setting.
-            if UserDefaults.standard.object(forKey: Self.ffmpegPathDefaultsKey) == nil,
-               let legacyPath = document.settings.ffmpegPath?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !legacyPath.isEmpty {
-                ffmpegPath = legacyPath
-            }
-            availableFlags = (document.availableFlags ?? []).sorted {
-                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-            }
-            selectedExportFlags = Set(document.selectedExportFlags ?? [])
-            exportMatchMode = FlagMatchMode(rawValue: document.exportMatchMode ?? "any") ?? .any
+                secondsPerImage = document.settings.secondsPerImage
+                width = document.settings.width
+                height = document.settings.height
+                fps = document.settings.fps
+                // FFmpeg path is now global and persisted via UserDefaults.
+                // If this is the first run with no persisted value, migrate from legacy project setting.
+                if UserDefaults.standard.object(forKey: Self.ffmpegPathDefaultsKey) == nil,
+                   let legacyPath = document.settings.ffmpegPath?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !legacyPath.isEmpty {
+                    ffmpegPath = legacyPath
+                }
+                availableFlags = (document.availableFlags ?? []).sorted {
+                    $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+                }
+                selectedExportFlags = Set(document.selectedExportFlags ?? [])
+                exportMatchMode = FlagMatchMode(rawValue: document.exportMatchMode ?? "any") ?? .any
 
-            if let photosFolder = resolveFolderForProject(
-                bookmarkData: document.photosFolderBookmark,
-                fallbackPath: document.photosFolderPath,
-                roleName: "photos"
-            ) {
-                loadFolder(photosFolder)
-                reorderPhotos(using: document.photoOrder)
-                applyPhotoMetadata(
-                    excludedByName: document.photoExcludedByName ?? [:],
-                    flagsByName: document.photoFlagsByName ?? [:]
-                )
-            } else {
-                folderURL = nil
-                items = []
-            }
+                switch resolveFolderForProject(
+                    bookmarkData: document.photosFolderBookmark,
+                    fallbackPath: document.photosFolderPath,
+                    roleName: "photos"
+                ) {
+                case .restored(let photosFolder):
+                    loadFolder(photosFolder)
+                    reorderPhotos(using: document.photoOrder)
+                    applyPhotoMetadata(
+                        excludedByName: document.photoExcludedByName ?? [:],
+                        flagsByName: document.photoFlagsByName ?? [:]
+                    )
+                case .notConfigured:
+                    folderURL = nil
+                    items = []
+                case .needsRelink:
+                    if let relinked = promptForFolderRelink(roleName: "photos") {
+                        loadFolder(relinked)
+                        reorderPhotos(using: document.photoOrder)
+                        applyPhotoMetadata(
+                            excludedByName: document.photoExcludedByName ?? [:],
+                            flagsByName: document.photoFlagsByName ?? [:]
+                        )
+                    } else {
+                        folderURL = nil
+                        items = []
+                    }
+                }
 
-            if let soundtrackFolder = resolveFolderForProject(
-                bookmarkData: document.soundtrackFolderBookmark,
-                fallbackPath: document.soundtrackFolderPath,
-                roleName: "soundtracks"
-            ) {
-                loadSoundtrackFolder(soundtrackFolder)
-                reorderSoundtracks(using: document.soundtrackOrder)
-            } else {
-                soundtrackFolderURL = nil
-                soundtracks = []
-            }
+                switch resolveFolderForProject(
+                    bookmarkData: document.soundtrackFolderBookmark,
+                    fallbackPath: document.soundtrackFolderPath,
+                    roleName: "soundtracks"
+                ) {
+                case .restored(let soundtrackFolder):
+                    loadSoundtrackFolder(soundtrackFolder)
+                    reorderSoundtracks(using: document.soundtrackOrder)
+                case .notConfigured:
+                    soundtrackFolderURL = nil
+                    soundtracks = []
+                case .needsRelink:
+                    if let relinked = promptForFolderRelink(roleName: "soundtracks") {
+                        loadSoundtrackFolder(relinked)
+                        reorderSoundtracks(using: document.soundtrackOrder)
+                    } else {
+                        soundtrackFolderURL = nil
+                        soundtracks = []
+                    }
+                }
 
-            currentProjectURL = url
-            status = "Opened project: \(url.lastPathComponent)"
+                currentProjectURL = url
+                status = "Opened project: \(url.lastPathComponent)"
+                hasUnsavedChanges = false
+            }
         } catch {
             status = AppError.projectLoadFailed(error.localizedDescription).localizedDescription
         }
@@ -295,8 +351,7 @@ final class AppModel: ObservableObject {
                 secondsPerImage: secondsPerImage,
                 width: width,
                 height: height,
-                fps: fps,
-                ffmpegPath: ffmpegPath
+                fps: fps
             ),
             availableFlags: availableFlags,
             selectedExportFlags: Array(selectedExportFlags),
@@ -310,23 +365,29 @@ final class AppModel: ObservableObject {
         bookmarkData: Data?,
         fallbackPath: String?,
         roleName: String
-    ) -> URL? {
+    ) -> FolderRestoreResult {
+        let hasSavedReference = bookmarkData != nil || !(fallbackPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+
+        guard hasSavedReference else {
+            return .notConfigured
+        }
+
         if let bookmarkData,
            let bookmarkedURL = resolveBookmarkURL(bookmarkData),
            folderExists(at: bookmarkedURL) {
             startSecurityScopedAccess(for: bookmarkedURL)
-            return bookmarkedURL
+            return .restored(bookmarkedURL)
         }
 
         if let fallbackPath {
             let fallbackURL = URL(fileURLWithPath: fallbackPath)
             if folderExists(at: fallbackURL) {
                 startSecurityScopedAccess(for: fallbackURL)
-                return fallbackURL
+                return .restored(fallbackURL)
             }
         }
 
-        return promptForFolderRelink(roleName: roleName)
+        return .needsRelink
     }
 
     private func resolveBookmarkURL(_ data: Data) -> URL? {
@@ -418,6 +479,90 @@ final class AppModel: ObservableObject {
         activeSecurityScopedURLs.removeAll()
     }
 
+    private func configureDirtyTracking() {
+        Publishers.CombineLatest4($secondsPerImage.dropFirst(), $width.dropFirst(), $height.dropFirst(), $fps.dropFirst())
+            .sink { [weak self] _, _, _, _ in
+                self?.markProjectDirty()
+            }
+            .store(in: &cancellables)
+
+        $items.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
+            .store(in: &cancellables)
+
+        $soundtracks.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
+            .store(in: &cancellables)
+
+        $availableFlags.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
+            .store(in: &cancellables)
+
+        $selectedExportFlags.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
+            .store(in: &cancellables)
+
+        $exportMatchMode.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
+            .store(in: &cancellables)
+
+        $folderURL.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
+            .store(in: &cancellables)
+
+        $soundtrackFolderURL.dropFirst()
+            .sink { [weak self] _ in self?.markProjectDirty() }
+            .store(in: &cancellables)
+    }
+
+    private func performProgrammaticUpdate(_ updates: () -> Void) {
+        isPerformingProgrammaticUpdate = true
+        updates()
+        isPerformingProgrammaticUpdate = false
+    }
+
+    private func markProjectDirty() {
+        guard !isPerformingProgrammaticUpdate else { return }
+        hasUnsavedChanges = true
+    }
+
+    private func confirmPendingChangesIfNeeded() -> Bool {
+        guard hasUnsavedChanges else { return true }
+
+        switch promptForPendingChanges() {
+        case .save:
+            if currentProjectURL == nil {
+                saveProjectAs()
+            } else {
+                saveProject()
+            }
+            return !hasUnsavedChanges
+        case .discard:
+            return true
+        case .cancel:
+            return false
+        }
+    }
+
+    private func promptForPendingChanges() -> PendingUserDecision {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Do you want to save changes to this project before closing?"
+        alert.informativeText = "If you don’t save, your recent project changes will be lost."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don’t Save")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertSecondButtonReturn:
+            return .discard
+        default:
+            return .cancel
+        }
+    }
+
     func move(from source: IndexSet, to destination: Int) {
         items.move(fromOffsets: source, toOffset: destination)
     }
@@ -482,6 +627,20 @@ final class AppModel: ObservableObject {
 
     var exportableItemsCount: Int { exportableItems.count }
 
+    func validateFFmpegPath() {
+        do {
+            let ffmpegURL = try resolveFFmpegURL()
+            do {
+                let versionLine = try ffmpegVersionLine(at: ffmpegURL)
+                status = "FFmpeg OK: \(ffmpegURL.path) — \(versionLine)"
+            } catch {
+                status = "FFmpeg launch failed at \(ffmpegURL.path): \(error.localizedDescription)"
+            }
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
     func chooseOutputAndEncode() {
         guard !items.isEmpty else {
             status = "Nothing to encode."
@@ -535,13 +694,21 @@ final class AppModel: ObservableObject {
             return bundled
         }
 
-        let candidates = [
-            ffmpegPath,
-            Self.defaultFFmpegPath,
-            "/usr/local/bin/ffmpeg"
-        ]
+        let userCandidate = normalizedFFmpegCandidate(from: ffmpegPath)
+        let defaultCandidate = normalizedFFmpegCandidate(from: Self.defaultFFmpegPath)
+        let intelHomebrewCandidate = normalizedFFmpegCandidate(from: "/usr/local/bin/ffmpeg")
+        let userHomebrewCandidate = normalizedFFmpegCandidate(from: "~/.homebrew/bin/ffmpeg")
+        let pathCandidate = ffmpegFromEnvironmentPATH()
 
-        if let match = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+        let candidates = [
+            userCandidate,
+            defaultCandidate,
+            intelHomebrewCandidate,
+            userHomebrewCandidate,
+            pathCandidate
+        ].compactMap { $0 }
+
+        if let match = candidates.first(where: { isLikelyRunnableExecutable(atPath: $0) }) {
             return URL(fileURLWithPath: match)
         }
 
@@ -555,5 +722,112 @@ final class AppModel: ObservableObject {
         } else {
             UserDefaults.standard.set(trimmed, forKey: Self.ffmpegPathDefaultsKey)
         }
+    }
+
+    private func normalizedFFmpegCandidate(from rawPath: String) -> String? {
+        var candidate = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return nil }
+
+        candidate = stripWrappingQuotes(from: candidate)
+
+        if candidate.hasPrefix("file://"), let fileURL = URL(string: candidate), fileURL.isFileURL {
+            candidate = fileURL.path
+        }
+
+        candidate = (candidate as NSString).expandingTildeInPath
+
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: candidate, isDirectory: &isDirectory), isDirectory.boolValue {
+            candidate = (candidate as NSString).appendingPathComponent("ffmpeg")
+        }
+
+        // Keep symlink paths as entered (e.g. ~/.homebrew/bin/ffmpeg) instead of
+        // forcing a resolved Cellar path, which can be more brittle across installs.
+        return (candidate as NSString).standardizingPath
+    }
+
+    private func stripWrappingQuotes(from text: String) -> String {
+        guard text.count >= 2 else { return text }
+
+        // Handle escaped wrapping quotes, e.g. \"/path/to/ffmpeg\"
+        if text.hasPrefix("\\\"") && text.hasSuffix("\\\"") && text.count >= 4 {
+            return String(text.dropFirst(2).dropLast(2))
+        }
+
+        let quotePairs: [(Character, Character)] = [
+            ("\"", "\""),
+            ("'", "'"),
+            ("“", "”"),
+            ("‘", "’")
+        ]
+
+        guard let first = text.first, let last = text.last else { return text }
+
+        if quotePairs.contains(where: { $0.0 == first && $0.1 == last }) {
+            return String(text.dropFirst().dropLast())
+        }
+
+        return text
+    }
+
+    private func ffmpegFromEnvironmentPATH() -> String? {
+        guard let path = ProcessInfo.processInfo.environment["PATH"], !path.isEmpty else {
+            return nil
+        }
+
+        for entry in path.split(separator: ":").map(String.init) {
+            let expanded = (entry as NSString).expandingTildeInPath
+            let candidate = (expanded as NSString).appendingPathComponent("ffmpeg")
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private func isLikelyRunnableExecutable(atPath path: String) -> Bool {
+        if FileManager.default.isExecutableFile(atPath: path) {
+            return true
+        }
+
+        // Some environments may report executable checks inconsistently for symlinks;
+        // allow existing files and rely on Process.run() to be the final authority.
+        return FileManager.default.fileExists(atPath: path)
+    }
+
+    private func ffmpegVersionLine(at url: URL) throws -> String {
+        do {
+            return try runVersionCommand(executableURL: url, arguments: ["-version"])
+        } catch {
+            // Fallback for environments where launching symlinked binaries directly fails.
+            return try runVersionCommand(
+                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [url.path, "-version"]
+            )
+        }
+    }
+
+    private func runVersionCommand(executableURL: URL, arguments: [String]) throws -> String {
+        let process = Process()
+        let pipe = Pipe()
+
+        process.executableURL = executableURL
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let text = String(decoding: data, as: UTF8.self)
+        let firstLine = text.split(separator: "\n").first.map(String.init) ?? "ffmpeg -version"
+
+        guard process.terminationStatus == 0 else {
+            throw AppError.ffmpegFailed(text)
+        }
+
+        return firstLine
     }
 }

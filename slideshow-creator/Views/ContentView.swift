@@ -39,6 +39,7 @@ struct ContentView: View {
             }
             .padding()
             .frame(minWidth: 900, minHeight: 600)
+            .background(WindowCloseGuard(model: model))
 
             if isPreviewPresented {
                 FullscreenPhotoPreview(
