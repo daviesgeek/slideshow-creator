@@ -18,8 +18,23 @@ final class AppModel: ObservableObject {
         case needsRelink
     }
 
+    enum PhotosViewMode: String, CaseIterable, Identifiable {
+        case list
+        case grid
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .list: return "List"
+            case .grid: return "Grid"
+            }
+        }
+    }
+
     private static let defaultFFmpegPath = "/opt/homebrew/bin/ffmpeg"
     private static let ffmpegPathDefaultsKey = "globalFFmpegPath"
+    private static let photosViewModeDefaultsKey = "photosViewMode"
 
     @Published var folderURL: URL?
     @Published var soundtrackFolderURL: URL?
@@ -29,6 +44,11 @@ final class AppModel: ObservableObject {
     @Published var soundtracks: [SoundtrackItem] = []
     @Published var selectedPhotoID: PhotoItem.ID?
     @Published var selectedPhotoIDs: Set<PhotoItem.ID> = []
+    @Published var photosViewMode: PhotosViewMode {
+        didSet {
+            UserDefaults.standard.set(photosViewMode.rawValue, forKey: Self.photosViewModeDefaultsKey)
+        }
+    }
     @Published var availableFlags: [String] = []
     @Published var selectedExportFlags: Set<String> = []
     @Published var exportMatchMode: FlagMatchMode = .any
@@ -85,6 +105,13 @@ final class AppModel: ObservableObject {
         } else {
             // Default for Apple Silicon Homebrew. The resolver also checks other common paths.
             ffmpegPath = Self.defaultFFmpegPath
+        }
+
+        if let storedMode = defaults.string(forKey: Self.photosViewModeDefaultsKey),
+           let mode = PhotosViewMode(rawValue: storedMode) {
+            photosViewMode = mode
+        } else {
+            photosViewMode = .list
         }
 
         configureDirtyTracking()
