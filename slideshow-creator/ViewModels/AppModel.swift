@@ -593,6 +593,52 @@ final class AppModel: ObservableObject {
         soundtracks.move(fromOffsets: source, toOffset: destination)
     }
 
+    func movePhoto(withID draggedID: PhotoItem.ID, before targetID: PhotoItem.ID) {
+        guard draggedID != targetID,
+              let sourceIndex = items.firstIndex(where: { $0.id == draggedID }),
+              let targetIndex = items.firstIndex(where: { $0.id == targetID }) else {
+            return
+        }
+
+        var reordered = items
+        let movedItem = reordered.remove(at: sourceIndex)
+        let adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
+        reordered.insert(movedItem, at: adjustedTargetIndex)
+        items = reordered
+    }
+
+    func movePhotoToEnd(withID draggedID: PhotoItem.ID) {
+        guard let sourceIndex = items.firstIndex(where: { $0.id == draggedID }) else { return }
+
+        var reordered = items
+        let movedItem = reordered.remove(at: sourceIndex)
+        reordered.append(movedItem)
+        items = reordered
+    }
+
+    func moveSoundtrack(withID draggedID: SoundtrackItem.ID, before targetID: SoundtrackItem.ID) {
+        guard draggedID != targetID,
+              let sourceIndex = soundtracks.firstIndex(where: { $0.id == draggedID }),
+              let targetIndex = soundtracks.firstIndex(where: { $0.id == targetID }) else {
+            return
+        }
+
+        var reordered = soundtracks
+        let movedItem = reordered.remove(at: sourceIndex)
+        let adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
+        reordered.insert(movedItem, at: adjustedTargetIndex)
+        soundtracks = reordered
+    }
+
+    func moveSoundtrackToEnd(withID draggedID: SoundtrackItem.ID) {
+        guard let sourceIndex = soundtracks.firstIndex(where: { $0.id == draggedID }) else { return }
+
+        var reordered = soundtracks
+        let movedItem = reordered.remove(at: sourceIndex)
+        reordered.append(movedItem)
+        soundtracks = reordered
+    }
+
     func addFlag(_ rawName: String) {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }

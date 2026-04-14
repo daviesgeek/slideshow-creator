@@ -4,6 +4,7 @@ struct PhotoRow: View {
     let item: PhotoItem
     let shortcutFlags: [String]
     let isSelected: Bool
+    let dragProvider: (() -> NSItemProvider)?
     let onSelect: () -> Void
     let onThumbnailTap: () -> Void
     let onExcludeToggle: (Bool) -> Void
@@ -11,6 +12,17 @@ struct PhotoRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            if let dragProvider {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 20)
+                    .contentShape(Rectangle())
+                    .onDrag(dragProvider)
+                    .help("Drag to reorder")
+            }
+
             Button(action: onThumbnailTap) {
                 ThumbnailView(url: item.url)
                     .frame(width: 72, height: 72)

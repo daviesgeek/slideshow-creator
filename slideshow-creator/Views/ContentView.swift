@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var isPreviewPresented = false
     @State private var previewIndex = 0
     @State private var newFlagName = ""
+    @State private var leftPaneMinWidth: CGFloat = 480
+    @State private var rightPaneMinWidth: CGFloat = 320
 
     var body: some View {
         ZStack {
@@ -25,13 +27,16 @@ struct ContentView: View {
 
                 FlagsPanelView(model: model, newFlagName: $newFlagName)
 
-                HStack(alignment: .top, spacing: 12) {
+                HSplitView {
                     PhotosPaneView(model: model) { item in
                         openPreview(for: item)
                     }
+                    .frame(minWidth: leftPaneMinWidth)
 
                     SoundtracksPaneView(model: model)
+                        .frame(minWidth: rightPaneMinWidth)
                 }
+                .frame(maxHeight: .infinity)
 
                 Text(model.status)
                     .font(.callout.monospaced())

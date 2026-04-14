@@ -1,8 +1,10 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PhotosPaneView: View {
     @ObservedObject var model: AppModel
     let onThumbnailTap: (PhotoItem) -> Void
+    @State private var draggedPhotoID: PhotoItem.ID?
 
     private func keyEquivalent(for number: Int) -> KeyEquivalent {
         KeyEquivalent(Character(String(number)))
@@ -10,8 +12,14 @@ struct PhotosPaneView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Photos")
-                .font(.headline)
+            HStack {
+                Text("Photos")
+                    .font(.headline)
+                Spacer()
+                Text("Drag rows to reorder")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if let folderURL = model.folderURL {
                 Text(folderURL.path)
@@ -31,6 +39,10 @@ struct PhotosPaneView: View {
                         item: item,
                         shortcutFlags: model.shortcutFlags,
                         isSelected: model.selectedPhotoID == item.id,
+                        dragProvider: {
+                            draggedPhotoID = item.id
+                            return NSItemProvider(object: item.id.uuidString as NSString)
+                        },
                         onSelect: { model.selectPhoto(item.id) },
                         onThumbnailTap: {
                             model.selectPhoto(item.id)
@@ -44,9 +56,23 @@ struct PhotosPaneView: View {
                         }
                     )
                     .tag(item.id)
+                    .onDrop(of: [UTType.text], delegate: PhotoReorderDropDelegate(
+                        targetItemID: item.id,
+                        model: model,
+                        draggedItemID: $draggedPhotoID
+                    ))
                 }
-                .onMove(perform: model.move)
+                if !model.items.isEmpty {
+                    Color.clear
+                        .frame(height: 24)
+                        .listRowSeparator(.hidden)
+                        .onDrop(of: [UTType.text], delegate: PhotoReorderToEndDropDelegate(
+                            model: model,
+                            draggedItemID: $draggedPhotoID
+                        ))
+                }
             }
+            .frame(minHeight: 260)
 
             HStack(spacing: 0) {
                 Button("Toggle Exclude") {
@@ -67,5 +93,45 @@ struct PhotosPaneView: View {
             }
             .allowsHitTesting(false)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct PhotoReorderDropDelegate: DropDelegate {
+    let targetItemID: PhotoItem.ID
+    let model: AppModel
+    @Binding var draggedItemID: PhotoItem.ID?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedItemID else { return }
+        model.movePhoto(withID: draggedItemID, before: targetItemID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedItemID = nil
+        return true
+    }
+}
+
+private struct PhotoReorderToEndDropDelegate: DropDelegate {
+    let model: AppModel
+    @Binding var draggedItemID: PhotoItem.ID?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedItemID else { return }
+        model.movePhotoToEnd(withID: draggedItemID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedItemID = nil
+        return true
     }
 }
