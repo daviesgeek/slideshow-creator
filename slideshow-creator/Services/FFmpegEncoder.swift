@@ -12,11 +12,8 @@ enum FFmpegEncoder {
         fps: Int
     ) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
             let pipe = Pipe()
-
-            process.executableURL = ffmpegURL
-            process.arguments = makeArguments(
+            let ffmpegArguments = makeArguments(
                 items: items,
                 soundtracks: soundtracks,
                 outputURL: outputURL,
@@ -25,24 +22,44 @@ enum FFmpegEncoder {
                 height: height,
                 fps: fps
             )
-            process.standardOutput = pipe
-            process.standardError = pipe
 
-            process.terminationHandler = { process in
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let text = String(decoding: data, as: UTF8.self)
+            func makeProcess(executableURL: URL, arguments: [String]) -> Process {
+                let process = Process()
 
-                if process.terminationStatus == 0 {
-                    continuation.resume(returning: "Done: \(outputURL.path)")
-                } else {
-                    continuation.resume(throwing: AppError.ffmpegFailed(text))
+                process.executableURL = executableURL
+                process.arguments = arguments
+                process.standardOutput = pipe
+                process.standardError = pipe
+
+                process.terminationHandler = { process in
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let text = String(decoding: data, as: UTF8.self)
+
+                    if process.terminationStatus == 0 {
+                        continuation.resume(returning: "Done: \(outputURL.path)")
+                    } else {
+                        continuation.resume(throwing: AppError.ffmpegFailed(text))
+                    }
                 }
+
+                return process
             }
 
+            let primary = makeProcess(executableURL: ffmpegURL, arguments: ffmpegArguments)
             do {
-                try process.run()
+                try primary.run()
             } catch {
-                continuation.resume(throwing: error)
+                // Fallback launch path for environments where direct executable launch fails.
+                let fallback = makeProcess(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                    arguments: [ffmpegURL.path] + ffmpegArguments
+                )
+
+                do {
+                    try fallback.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }

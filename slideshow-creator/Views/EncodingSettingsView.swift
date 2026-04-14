@@ -6,6 +6,13 @@ struct EncodingSettingsView: View {
     var body: some View {
         HStack(spacing: 12) {
             TextField("FFmpeg path", text: $model.ffmpegPath)
+                .onSubmit {
+                    model.validateFFmpegPath()
+                }
+
+            Button("Validate FFmpeg") {
+                model.validateFFmpegPath()
+            }
 
             Stepper(
                 "Seconds/photo: \(model.secondsPerImage, specifier: "%.1f")",
