@@ -3,7 +3,10 @@ import AppKit
 
 struct FullscreenPhotoPreview: View {
     let items: [PhotoItem]
+    let shortcutFlags: [String]
     @Binding var currentIndex: Int
+    let onToggleExclude: (PhotoItem.ID) -> Void
+    let onToggleFlag: (Int, PhotoItem.ID) -> Void
     let onClose: () -> Void
 
     private var hasItems: Bool { !items.isEmpty }
@@ -53,6 +56,26 @@ struct FullscreenPhotoPreview: View {
                         Button("Next", action: goNext)
                             .keyboardShortcut(.rightArrow, modifiers: [])
                             .disabled(safeIndex == items.count - 1)
+
+                        Button(item.isExcluded ? "Include (X)" : "Exclude (X)") {
+                            onToggleExclude(item.id)
+                        }
+                        .keyboardShortcut("x", modifiers: [])
+
+                        ForEach(Array(shortcutFlags.enumerated()), id: \.offset) { index, flag in
+                            let enabled = item.flags.contains(flag)
+                            Button {
+                                onToggleFlag(index + 1, item.id)
+                            } label: {
+                                Text("\(index + 1) \(flag)")
+                                    .font(.caption)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(enabled ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.2), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [])
+                        }
 
                         Divider()
                             .frame(height: 18)

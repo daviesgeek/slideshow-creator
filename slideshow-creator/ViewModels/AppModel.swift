@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
 
     @Published var items: [PhotoItem] = []
     @Published var soundtracks: [SoundtrackItem] = []
+    @Published var selectedPhotoID: PhotoItem.ID?
     @Published var availableFlags: [String] = []
     @Published var selectedExportFlags: Set<String> = []
     @Published var exportMatchMode: FlagMatchMode = .any
@@ -89,6 +90,7 @@ final class AppModel: ObservableObject {
             currentProjectURL = nil
             items = []
             soundtracks = []
+            selectedPhotoID = nil
             availableFlags = []
             selectedExportFlags = []
             exportMatchMode = .any
@@ -180,6 +182,9 @@ final class AppModel: ObservableObject {
                 }
                 return PhotoItem(url: url)
             }
+            selectedPhotoID = selectedPhotoID.flatMap { selected in
+                items.contains(where: { $0.id == selected }) ? selected : nil
+            } ?? items.first?.id
             status = "Loaded \(items.count) images."
         } catch {
             status = error.localizedDescription
@@ -587,6 +592,43 @@ final class AppModel: ObservableObject {
         for index in items.indices {
             items[index].flags.remove(flag)
         }
+    }
+
+    var shortcutFlags: [String] {
+        Array(availableFlags.prefix(9))
+    }
+
+    func selectPhoto(_ id: PhotoItem.ID?) {
+        selectedPhotoID = id
+    }
+
+    func toggleExcludeForSelectedPhoto() {
+        guard let selectedPhotoID else { return }
+        toggleExclude(for: selectedPhotoID)
+    }
+
+    func toggleExclude(for id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].isExcluded.toggle()
+    }
+
+    func toggleShortcutFlag(_ number: Int, for id: PhotoItem.ID) {
+        guard number >= 1 else { return }
+        let flags = shortcutFlags
+        guard number <= flags.count else { return }
+
+        let flag = flags[number - 1]
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        if items[index].flags.contains(flag) {
+            items[index].flags.remove(flag)
+        } else {
+            items[index].flags.insert(flag)
+        }
+    }
+
+    func toggleShortcutFlagForSelectedPhoto(_ number: Int) {
+        guard let selectedPhotoID else { return }
+        toggleShortcutFlag(number, for: selectedPhotoID)
     }
 
     func setPhotoExcluded(_ isExcluded: Bool, for id: PhotoItem.ID) {

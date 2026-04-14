@@ -44,7 +44,14 @@ struct ContentView: View {
             if isPreviewPresented {
                 FullscreenPhotoPreview(
                     items: model.items,
+                    shortcutFlags: model.shortcutFlags,
                     currentIndex: $previewIndex,
+                    onToggleExclude: { id in
+                        model.toggleExclude(for: id)
+                    },
+                    onToggleFlag: { number, id in
+                        model.toggleShortcutFlag(number, for: id)
+                    },
                     onClose: { isPreviewPresented = false }
                 )
                 .transition(.opacity)
