@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PersistentHSplitView<Left: View, Right: View>: View {
     @Binding var ratio: Double
@@ -50,10 +51,18 @@ struct PersistentHSplitView<Left: View, Right: View>: View {
                             .frame(width: 2, height: 28)
                     }
                     .contentShape(Rectangle())
+                    .onHover { isHovering in
+                        if isHovering {
+                            NSCursor.resizeLeftRight.set()
+                        } else {
+                            NSCursor.arrow.set()
+                        }
+                    }
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
                                 guard contentWidth > 0 else { return }
+                                NSCursor.resizeLeftRight.set()
                                 let startRatio = dragStartRatio ?? ratio
                                 dragStartRatio = startRatio
                                 let delta = Double(value.translation.width / contentWidth)
@@ -61,6 +70,7 @@ struct PersistentHSplitView<Left: View, Right: View>: View {
                             }
                             .onEnded { _ in
                                 dragStartRatio = nil
+                                NSCursor.arrow.set()
                             }
                     )
 
