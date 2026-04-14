@@ -6,6 +6,18 @@ struct PhotosPaneView: View {
     let onThumbnailTap: (PhotoItem) -> Void
     @State private var draggedPhotoID: PhotoItem.ID?
 
+    private var selectedPhotoIDs: Set<PhotoItem.ID> {
+        model.selectedPhotoIDs
+    }
+
+    private var selectedPhotoCount: Int {
+        selectedPhotoIDs.count
+    }
+
+    private var hasSelection: Bool {
+        selectedPhotoCount > 0
+    }
+
     private func keyEquivalent(for number: Int) -> KeyEquivalent {
         KeyEquivalent(Character(String(number)))
     }
@@ -30,20 +42,19 @@ struct PhotosPaneView: View {
             }
 
             List(selection: Binding(get: {
-                model.selectedPhotoID
+                model.selectedPhotoIDs
             }, set: { newValue in
-                model.selectPhoto(newValue)
+                model.selectPhotos(newValue)
             })) {
                 ForEach(model.items) { item in
                     PhotoRow(
                         item: item,
                         shortcutFlags: model.shortcutFlags,
-                        isSelected: model.selectedPhotoID == item.id,
+                        isSelected: model.selectedPhotoIDs.contains(item.id),
                         dragProvider: {
                             draggedPhotoID = item.id
                             return NSItemProvider(object: item.id.uuidString as NSString)
                         },
-                        onSelect: { model.selectPhoto(item.id) },
                         onThumbnailTap: {
                             model.selectPhoto(item.id)
                             onThumbnailTap(item)
@@ -73,6 +84,45 @@ struct PhotosPaneView: View {
                 }
             }
             .frame(minHeight: 260)
+
+            HStack(spacing: 8) {
+                Text(hasSelection ? "\(selectedPhotoCount) selected" : "No selection")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Group {
+                    Button("Top") {
+                        model.moveSelectedPhotosToTop(selectedPhotoIDs)
+                    }
+                    Button("Up") {
+                        model.moveSelectedPhotosUp(selectedPhotoIDs)
+                    }
+                    Button("Down") {
+                        model.moveSelectedPhotosDown(selectedPhotoIDs)
+                    }
+                    Button("Bottom") {
+                        model.moveSelectedPhotosToBottom(selectedPhotoIDs)
+                    }
+                }
+                .disabled(!hasSelection)
+
+                Divider()
+                    .frame(height: 14)
+
+                Button("Include") {
+                    model.setPhotosExcluded(false, for: selectedPhotoIDs)
+                }
+                .disabled(!hasSelection)
+
+                Button("Exclude") {
+                    model.setPhotosExcluded(true, for: selectedPhotoIDs)
+                }
+                .disabled(!hasSelection)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
 
             HStack(spacing: 0) {
                 Button("Toggle Exclude") {

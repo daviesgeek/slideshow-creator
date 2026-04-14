@@ -5,7 +5,6 @@ struct PhotoRow: View {
     let shortcutFlags: [String]
     let isSelected: Bool
     let dragProvider: (() -> NSItemProvider)?
-    let onSelect: () -> Void
     let onThumbnailTap: () -> Void
     let onExcludeToggle: (Bool) -> Void
     let onFlagToggle: (String, Bool) -> Void
@@ -84,6 +83,5 @@ struct PhotoRow: View {
         .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
     }
 }

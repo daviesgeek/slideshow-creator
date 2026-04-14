@@ -28,6 +28,7 @@ final class AppModel: ObservableObject {
     @Published var items: [PhotoItem] = []
     @Published var soundtracks: [SoundtrackItem] = []
     @Published var selectedPhotoID: PhotoItem.ID?
+    @Published var selectedPhotoIDs: Set<PhotoItem.ID> = []
     @Published var availableFlags: [String] = []
     @Published var selectedExportFlags: Set<String> = []
     @Published var exportMatchMode: FlagMatchMode = .any
@@ -101,6 +102,7 @@ final class AppModel: ObservableObject {
             items = []
             soundtracks = []
             selectedPhotoID = nil
+            selectedPhotoIDs = []
             availableFlags = []
             selectedExportFlags = []
             exportMatchMode = .any
@@ -181,6 +183,8 @@ final class AppModel: ObservableObject {
             guard !imageURLs.isEmpty else {
                 folderURL = folder
                 items = []
+                selectedPhotoID = nil
+                selectedPhotoIDs = []
                 status = AppError.noImages.localizedDescription
                 return
             }
@@ -196,6 +200,7 @@ final class AppModel: ObservableObject {
             selectedPhotoID = selectedPhotoID.flatMap { selected in
                 items.contains(where: { $0.id == selected }) ? selected : nil
             } ?? items.first?.id
+            selectedPhotoIDs = selectedPhotoID.map { [$0] } ?? []
             status = "Loaded \(items.count) images."
         } catch {
             status = error.localizedDescription
@@ -299,6 +304,8 @@ final class AppModel: ObservableObject {
                 case .notConfigured:
                     folderURL = nil
                     items = []
+                    selectedPhotoID = nil
+                    selectedPhotoIDs = []
                 case .needsRelink:
                     if let relinked = promptForFolderRelink(roleName: "photos") {
                         loadFolder(relinked)
@@ -310,6 +317,8 @@ final class AppModel: ObservableObject {
                     } else {
                         folderURL = nil
                         items = []
+                        selectedPhotoID = nil
+                        selectedPhotoIDs = []
                     }
                 }
 
@@ -663,16 +672,39 @@ final class AppModel: ObservableObject {
 
     func selectPhoto(_ id: PhotoItem.ID?) {
         selectedPhotoID = id
+        selectedPhotoIDs = id.map { [$0] } ?? []
+    }
+
+    func selectPhotos(_ ids: Set<PhotoItem.ID>) {
+        let availableIDs = Set(items.map(\.id))
+        let normalized = ids.intersection(availableIDs)
+        selectedPhotoIDs = normalized
+
+        if let selectedPhotoID, normalized.contains(selectedPhotoID) {
+            return
+        }
+
+        selectedPhotoID = items.first(where: { normalized.contains($0.id) })?.id
     }
 
     func toggleExcludeForSelectedPhoto() {
-        guard let selectedPhotoID else { return }
-        toggleExclude(for: selectedPhotoID)
+        let targetIDs = effectiveSelectedPhotoIDs
+        guard !targetIDs.isEmpty else { return }
+        toggleExclude(for: targetIDs)
     }
 
     func toggleExclude(for id: PhotoItem.ID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].isExcluded.toggle()
+    }
+
+    func toggleExclude(for ids: Set<PhotoItem.ID>) {
+        let normalized = normalizedPhotoSelection(ids)
+        guard !normalized.isEmpty else { return }
+
+        for index in items.indices where normalized.contains(items[index].id) {
+            items[index].isExcluded.toggle()
+        }
     }
 
     func toggleShortcutFlag(_ number: Int, for id: PhotoItem.ID) {
@@ -697,6 +729,63 @@ final class AppModel: ObservableObject {
     func setPhotoExcluded(_ isExcluded: Bool, for id: PhotoItem.ID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].isExcluded = isExcluded
+    }
+
+    func setPhotosExcluded(_ isExcluded: Bool, for ids: Set<PhotoItem.ID>) {
+        let normalized = normalizedPhotoSelection(ids)
+        guard !normalized.isEmpty else { return }
+
+        for index in items.indices where normalized.contains(items[index].id) {
+            items[index].isExcluded = isExcluded
+        }
+    }
+
+    func moveSelectedPhotosUp(_ ids: Set<PhotoItem.ID>) {
+        let selected = normalizedPhotoSelection(ids)
+        guard !selected.isEmpty else { return }
+
+        var reordered = items
+        for index in 1..<reordered.count {
+            let currentID = reordered[index].id
+            let previousID = reordered[index - 1].id
+            if selected.contains(currentID), !selected.contains(previousID) {
+                reordered.swapAt(index, index - 1)
+            }
+        }
+        items = reordered
+    }
+
+    func moveSelectedPhotosDown(_ ids: Set<PhotoItem.ID>) {
+        let selected = normalizedPhotoSelection(ids)
+        guard !selected.isEmpty else { return }
+
+        var reordered = items
+        for index in stride(from: reordered.count - 2, through: 0, by: -1) {
+            let currentID = reordered[index].id
+            let nextID = reordered[index + 1].id
+            if selected.contains(currentID), !selected.contains(nextID) {
+                reordered.swapAt(index, index + 1)
+            }
+        }
+        items = reordered
+    }
+
+    func moveSelectedPhotosToTop(_ ids: Set<PhotoItem.ID>) {
+        let selected = normalizedPhotoSelection(ids)
+        guard !selected.isEmpty else { return }
+
+        let selectedItems = items.filter { selected.contains($0.id) }
+        let unselectedItems = items.filter { !selected.contains($0.id) }
+        items = selectedItems + unselectedItems
+    }
+
+    func moveSelectedPhotosToBottom(_ ids: Set<PhotoItem.ID>) {
+        let selected = normalizedPhotoSelection(ids)
+        guard !selected.isEmpty else { return }
+
+        let unselectedItems = items.filter { !selected.contains($0.id) }
+        let selectedItems = items.filter { selected.contains($0.id) }
+        items = unselectedItems + selectedItems
     }
 
     func setFlag(_ flag: String, enabled: Bool, for id: PhotoItem.ID) {
@@ -731,6 +820,23 @@ final class AppModel: ObservableObject {
     }
 
     var exportableItemsCount: Int { exportableItems.count }
+
+    private var effectiveSelectedPhotoIDs: Set<PhotoItem.ID> {
+        if !selectedPhotoIDs.isEmpty {
+            return normalizedPhotoSelection(selectedPhotoIDs)
+        }
+
+        if let selectedPhotoID {
+            return normalizedPhotoSelection([selectedPhotoID])
+        }
+
+        return []
+    }
+
+    private func normalizedPhotoSelection(_ ids: Set<PhotoItem.ID>) -> Set<PhotoItem.ID> {
+        let availableIDs = Set(items.map(\.id))
+        return ids.intersection(availableIDs)
+    }
 
     func validateFFmpegPath() {
         do {
