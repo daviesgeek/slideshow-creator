@@ -135,75 +135,84 @@ struct PhotosPaneView: View {
     }
 
     private var gridView: some View {
-        ScrollView {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { gridAvailableWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, newWidth in
-                        gridAvailableWidth = newWidth
-                    }
-            }
-            .frame(height: 0)
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridCellWidth), spacing: gridSpacing)], spacing: gridSpacing) {
-                ForEach(model.items) { item in
-                    PhotoGridCellView(
-                        item: item,
-                        shortcutFlags: model.shortcutFlags,
-                        isSelected: model.selectedPhotoIDs.contains(item.id),
-                        isDropTarget: gridDropTargetID == item.id,
-                        thumbnailHeight: gridThumbnailHeight,
-                        thumbnailMaxPixelSize: gridThumbnailMaxPixelSize,
-                        onSelect: { model.selectPhoto(item.id) },
-                        onThumbnailTap: {
-                            model.selectPhoto(item.id)
-                            onThumbnailTap(item)
-                        },
-                        onExcludeToggle: { isExcluded in
-                            model.setPhotoExcluded(isExcluded, for: item.id)
-                        },
-                        onFlagToggle: { flag, isEnabled in
-                            model.setFlag(flag, enabled: isEnabled, for: item.id)
-                        },
-                        dragProvider: {
-                            draggedPhotoID = item.id
-                            return NSItemProvider(object: item.id.uuidString as NSString)
+        ScrollViewReader { proxy in
+            ScrollView {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { gridAvailableWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, newWidth in
+                            gridAvailableWidth = newWidth
                         }
-                    )
-                    .onDrop(
-                        of: [UTType.text],
-                        delegate: GridPhotoDropDelegate(
-                            targetItemID: item.id,
-                            model: model,
-                            draggedItemID: $draggedPhotoID,
-                            dropTargetID: $gridDropTargetID,
-                            isDroppingAtEnd: $isGridDroppingAtEnd
-                        )
-                    )
                 }
+                .frame(height: 0)
 
-                Color.clear
-                    .frame(height: 20)
-                    .overlay(alignment: .leading) {
-                        if isGridDroppingAtEnd {
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.accentColor)
-                                .frame(width: 3)
-                                .padding(.vertical, 2)
-                                .padding(.leading, 2)
-                        }
-                    }
-                    .onDrop(
-                        of: [UTType.text],
-                        delegate: GridPhotoDropToEndDelegate(
-                            model: model,
-                            draggedItemID: $draggedPhotoID,
-                            dropTargetID: $gridDropTargetID,
-                            isDroppingAtEnd: $isGridDroppingAtEnd
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: gridCellWidth), spacing: gridSpacing)], spacing: gridSpacing) {
+                    ForEach(model.items) { item in
+                        PhotoGridCellView(
+                            item: item,
+                            shortcutFlags: model.shortcutFlags,
+                            isSelected: model.selectedPhotoIDs.contains(item.id),
+                            isDropTarget: gridDropTargetID == item.id,
+                            thumbnailHeight: gridThumbnailHeight,
+                            thumbnailMaxPixelSize: gridThumbnailMaxPixelSize,
+                            onSelect: { model.selectPhoto(item.id) },
+                            onThumbnailTap: {
+                                model.selectPhoto(item.id)
+                                onThumbnailTap(item)
+                            },
+                            onExcludeToggle: { isExcluded in
+                                model.setPhotoExcluded(isExcluded, for: item.id)
+                            },
+                            onFlagToggle: { flag, isEnabled in
+                                model.setFlag(flag, enabled: isEnabled, for: item.id)
+                            },
+                            dragProvider: {
+                                draggedPhotoID = item.id
+                                return NSItemProvider(object: item.id.uuidString as NSString)
+                            }
                         )
-                    )
+                        .id(item.id)
+                        .onDrop(
+                            of: [UTType.text],
+                            delegate: GridPhotoDropDelegate(
+                                targetItemID: item.id,
+                                model: model,
+                                draggedItemID: $draggedPhotoID,
+                                dropTargetID: $gridDropTargetID,
+                                isDroppingAtEnd: $isGridDroppingAtEnd
+                            )
+                        )
+                    }
+
+                    Color.clear
+                        .frame(height: 20)
+                        .overlay(alignment: .leading) {
+                            if isGridDroppingAtEnd {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.accentColor)
+                                    .frame(width: 3)
+                                    .padding(.vertical, 2)
+                                    .padding(.leading, 2)
+                            }
+                        }
+                        .onDrop(
+                            of: [UTType.text],
+                            delegate: GridPhotoDropToEndDelegate(
+                                model: model,
+                                draggedItemID: $draggedPhotoID,
+                                dropTargetID: $gridDropTargetID,
+                                isDroppingAtEnd: $isGridDroppingAtEnd
+                            )
+                        )
+                }
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+            .onAppear {
+                scrollGridSelectionIntoView(with: proxy, animated: false)
+            }
+            .onChange(of: model.selectedPhotoID) { _, _ in
+                scrollGridSelectionIntoView(with: proxy)
+            }
         }
         .frame(minHeight: 260)
     }
@@ -323,6 +332,20 @@ struct PhotosPaneView: View {
         let movement = horizontalDelta + (verticalDelta * gridColumnCount)
         let targetIndex = min(max(0, currentIndex + movement), model.items.count - 1)
         model.selectPhoto(model.items[targetIndex].id)
+    }
+
+    private func scrollGridSelectionIntoView(with proxy: ScrollViewProxy, animated: Bool = true) {
+        guard model.photosViewMode == .grid, let selectedPhotoID = model.selectedPhotoID else { return }
+
+        let action = {
+            proxy.scrollTo(selectedPhotoID, anchor: .center)
+        }
+
+        if animated {
+            withAnimation(.easeInOut(duration: 0.12), action)
+        } else {
+            action()
+        }
     }
 }
 
