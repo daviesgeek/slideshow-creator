@@ -27,6 +27,10 @@ struct PhotosPaneView: View {
         max(90, gridCellWidth * gridThumbnailHeightScale)
     }
 
+    private var gridThumbnailMaxPixelSize: CGFloat {
+        max(gridCellWidth, gridThumbnailHeight)
+    }
+
     private var gridCellWidth: CGFloat {
         CGFloat(model.photosGridCellWidth)
     }
@@ -149,6 +153,7 @@ struct PhotosPaneView: View {
                         isSelected: model.selectedPhotoIDs.contains(item.id),
                         isDropTarget: gridDropTargetID == item.id,
                         thumbnailHeight: gridThumbnailHeight,
+                        thumbnailMaxPixelSize: gridThumbnailMaxPixelSize,
                         onSelect: { model.selectPhoto(item.id) },
                         onThumbnailTap: {
                             model.selectPhoto(item.id)

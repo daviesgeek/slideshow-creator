@@ -23,7 +23,7 @@ struct PhotoRow: View {
             }
 
             Button(action: onThumbnailTap) {
-                ThumbnailView(url: item.url)
+                ThumbnailView(url: item.url, maxPixelSize: 72)
                     .frame(width: 72, height: 72)
             }
             .buttonStyle(.plain)

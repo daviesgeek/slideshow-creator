@@ -6,6 +6,7 @@ struct PhotoGridCellView: View {
     let isSelected: Bool
     let isDropTarget: Bool
     let thumbnailHeight: CGFloat
+    let thumbnailMaxPixelSize: CGFloat
     let onSelect: () -> Void
     let onThumbnailTap: () -> Void
     let onExcludeToggle: (Bool) -> Void
@@ -15,7 +16,7 @@ struct PhotoGridCellView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button(action: onThumbnailTap) {
-                ThumbnailView(url: item.url)
+                ThumbnailView(url: item.url, maxPixelSize: thumbnailMaxPixelSize)
                     .frame(height: thumbnailHeight)
                     .frame(maxWidth: .infinity)
                     .overlay(alignment: .topLeading) {
