@@ -187,9 +187,6 @@ struct PhotosPaneView: View {
                                 model.selectPhoto(item.id)
                                 onThumbnailTap(item)
                             },
-                            onExcludeToggle: { isExcluded in
-                                model.setPhotoExcluded(isExcluded, for: item.id)
-                            },
                             onFlagToggle: { flag, isEnabled in
                                 model.setFlag(flag, enabled: isEnabled, for: item.id)
                             },
