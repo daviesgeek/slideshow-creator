@@ -14,13 +14,10 @@ struct EncodingSettingsView: View {
                 model.validateFFmpegPath()
             }
 
-            Stepper(
-                "Seconds/photo: \(model.secondsPerImage, specifier: "%.1f")",
-                value: $model.secondsPerImage,
-                in: 1...30,
-                step: 0.5
+            SecondsPerPhotoField(
+                label: "Seconds/photo:",
+                value: $model.secondsPerImage
             )
-            .frame(width: 180)
 
             Picker("Mode", selection: $model.encodeSpeedMode) {
                 ForEach(EncodeSpeedMode.allCases) { mode in
