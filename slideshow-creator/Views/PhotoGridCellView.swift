@@ -75,7 +75,8 @@ private struct PhotoGridSelectionInteractions: ViewModifier {
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .onTapGesture(count: 2, perform: onThumbnailTap)
             .onTapGesture(count: 1) {
-                let modifiers = NSEvent.modifierFlags.intersection([.shift, .command])
+                let modifiers = (NSApp.currentEvent?.modifierFlags ?? [])
+                    .intersection([.shift, .command])
                 onSelect(modifiers)
             }
     }

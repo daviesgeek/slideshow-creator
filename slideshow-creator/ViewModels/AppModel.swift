@@ -790,26 +790,37 @@ final class AppModel: ObservableObject {
     }
 
     func movePhoto(withID draggedID: PhotoItem.ID, before targetID: PhotoItem.ID) {
-        guard draggedID != targetID,
-              let sourceIndex = items.firstIndex(where: { $0.id == draggedID }),
-              let targetIndex = items.firstIndex(where: { $0.id == targetID }) else {
-            return
-        }
-
-        var reordered = items
-        let movedItem = reordered.remove(at: sourceIndex)
-        let adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
-        reordered.insert(movedItem, at: adjustedTargetIndex)
-        items = reordered
+        movePhotos(withIDs: [draggedID], before: targetID)
     }
 
     func movePhotoToEnd(withID draggedID: PhotoItem.ID) {
-        guard let sourceIndex = items.firstIndex(where: { $0.id == draggedID }) else { return }
+        movePhotosToEnd(withIDs: [draggedID])
+    }
 
-        var reordered = items
-        let movedItem = reordered.remove(at: sourceIndex)
-        reordered.append(movedItem)
-        items = reordered
+    func movePhotos(withIDs ids: Set<PhotoItem.ID>, before targetID: PhotoItem.ID) {
+        let movingIDs = normalizedPhotoSelection(ids)
+        guard !movingIDs.isEmpty else { return }
+        guard !movingIDs.contains(targetID) else { return }
+
+        let movingItems = items.filter { movingIDs.contains($0.id) }
+        guard !movingItems.isEmpty else { return }
+
+        var remainingItems = items.filter { !movingIDs.contains($0.id) }
+        guard let targetIndex = remainingItems.firstIndex(where: { $0.id == targetID }) else { return }
+
+        remainingItems.insert(contentsOf: movingItems, at: targetIndex)
+        items = remainingItems
+    }
+
+    func movePhotosToEnd(withIDs ids: Set<PhotoItem.ID>) {
+        let movingIDs = normalizedPhotoSelection(ids)
+        guard !movingIDs.isEmpty else { return }
+
+        let movingItems = items.filter { movingIDs.contains($0.id) }
+        guard !movingItems.isEmpty else { return }
+
+        let remainingItems = items.filter { !movingIDs.contains($0.id) }
+        items = remainingItems + movingItems
     }
 
     func moveSoundtrack(withID draggedID: SoundtrackItem.ID, before targetID: SoundtrackItem.ID) {
@@ -920,7 +931,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func extendPhotoSelection(to id: PhotoItem.ID, orderedIDs: [PhotoItem.ID]) {
+    func extendPhotoSelection(to id: PhotoItem.ID, orderedIDs: [PhotoItem.ID], additive: Bool = false) {
         guard let targetIndex = orderedIDs.firstIndex(of: id) else { return }
         let anchorID = selectionAnchorPhotoID ?? selectedPhotoID ?? id
         guard let anchorIndex = orderedIDs.firstIndex(of: anchorID) else {
@@ -930,7 +941,8 @@ final class AppModel: ObservableObject {
 
         let lowerBound = min(anchorIndex, targetIndex)
         let upperBound = max(anchorIndex, targetIndex)
-        selectedPhotoIDs = normalizedPhotoSelection(Set(orderedIDs[lowerBound ... upperBound]))
+        let rangeSelection = normalizedPhotoSelection(Set(orderedIDs[lowerBound ... upperBound]))
+        selectedPhotoIDs = additive ? selectedPhotoIDs.union(rangeSelection) : rangeSelection
         selectedPhotoID = id
         selectionAnchorPhotoID = anchorID
     }

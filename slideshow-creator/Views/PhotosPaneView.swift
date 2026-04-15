@@ -7,7 +7,7 @@ struct PhotosPaneView: View {
     let isKeyboardNavigationEnabled: Bool
     let onThumbnailTap: (PhotoItem) -> Void
 
-    @State private var draggedPhotoID: PhotoItem.ID?
+    @State private var draggedPhotoIDs: Set<PhotoItem.ID> = []
     @State private var gridDropTargetID: PhotoItem.ID?
     @State private var isGridDroppingAtEnd = false
     @State private var gridAvailableWidth: CGFloat = 0
@@ -138,7 +138,7 @@ struct PhotosPaneView: View {
                     shortcutFlags: model.shortcutFlags,
                     isSelected: visibleSelectedPhotoIDs.contains(item.id),
                     dragProvider: {
-                        draggedPhotoID = item.id
+                        beginPhotoDrag(for: item.id)
                         return NSItemProvider(object: item.id.uuidString as NSString)
                     },
                     onThumbnailTap: {
@@ -191,7 +191,7 @@ struct PhotosPaneView: View {
                                 model.setFlag(flag, enabled: isEnabled, for: item.id)
                             },
                             dragProvider: {
-                                draggedPhotoID = item.id
+                                beginPhotoDrag(for: item.id)
                                 return NSItemProvider(object: item.id.uuidString as NSString)
                             }
                         )
@@ -201,7 +201,7 @@ struct PhotosPaneView: View {
                             delegate: GridPhotoDropDelegate(
                                 targetItemID: item.id,
                                 model: model,
-                                draggedItemID: $draggedPhotoID,
+                                draggedItemIDs: $draggedPhotoIDs,
                                 dropTargetID: $gridDropTargetID,
                                 isDroppingAtEnd: $isGridDroppingAtEnd
                             )
@@ -223,7 +223,7 @@ struct PhotosPaneView: View {
                             of: [UTType.text],
                             delegate: GridPhotoDropToEndDelegate(
                                 model: model,
-                                draggedItemID: $draggedPhotoID,
+                                draggedItemIDs: $draggedPhotoIDs,
                                 dropTargetID: $gridDropTargetID,
                                 isDroppingAtEnd: $isGridDroppingAtEnd
                             )
@@ -334,15 +334,15 @@ struct PhotosPaneView: View {
     }
 
     private func handleListInsert(at index: Int, itemProviders _: [NSItemProvider]) {
-        guard let draggedPhotoID else { return }
+        guard !draggedPhotoIDs.isEmpty else { return }
 
         if index >= filteredItems.count {
-            model.movePhotoToEnd(withID: draggedPhotoID)
+            model.movePhotosToEnd(withIDs: draggedPhotoIDs)
         } else {
-            model.movePhoto(withID: draggedPhotoID, before: filteredItems[index].id)
+            model.movePhotos(withIDs: draggedPhotoIDs, before: filteredItems[index].id)
         }
 
-        self.draggedPhotoID = nil
+        draggedPhotoIDs = []
     }
 
     private func moveGridSelection(horizontalDelta: Int = 0, verticalDelta: Int = 0) {
@@ -360,13 +360,25 @@ struct PhotosPaneView: View {
 
     private func handleGridSelection(for id: PhotoItem.ID, modifiers: NSEvent.ModifierFlags) {
         let orderedIDs = filteredItems.map(\.id)
+        let isShift = modifiers.contains(.shift)
+        let isCommand = modifiers.contains(.command)
 
-        if modifiers.contains(.shift) {
-            model.extendPhotoSelection(to: id, orderedIDs: orderedIDs)
-        } else if modifiers.contains(.command) {
+        if isShift {
+            model.extendPhotoSelection(to: id, orderedIDs: orderedIDs, additive: isCommand)
+        } else if isCommand {
             model.togglePhotoSelection(id)
         } else {
             model.selectPhoto(id)
+        }
+    }
+
+    private func beginPhotoDrag(for id: PhotoItem.ID) {
+        let selected = model.selectedPhotoIDs
+        if selected.contains(id) {
+            draggedPhotoIDs = selected
+        } else {
+            model.selectPhoto(id)
+            draggedPhotoIDs = [id]
         }
     }
 
@@ -403,16 +415,15 @@ struct PhotosPaneView: View {
 private struct GridPhotoDropDelegate: DropDelegate {
     let targetItemID: PhotoItem.ID
     let model: AppModel
-    @Binding var draggedItemID: PhotoItem.ID?
+    @Binding var draggedItemIDs: Set<PhotoItem.ID>
     @Binding var dropTargetID: PhotoItem.ID?
     @Binding var isDroppingAtEnd: Bool
 
     func dropEntered(info _: DropInfo) {
-        guard let draggedItemID else { return }
-        guard draggedItemID != targetItemID else { return }
+        guard !draggedItemIDs.isEmpty else { return }
+        guard !draggedItemIDs.contains(targetItemID) else { return }
         isDroppingAtEnd = false
         dropTargetID = targetItemID
-        model.movePhoto(withID: draggedItemID, before: targetItemID)
     }
 
     func dropUpdated(info _: DropInfo) -> DropProposal? {
@@ -420,7 +431,10 @@ private struct GridPhotoDropDelegate: DropDelegate {
     }
 
     func performDrop(info _: DropInfo) -> Bool {
-        draggedItemID = nil
+        if !draggedItemIDs.isEmpty {
+            model.movePhotos(withIDs: draggedItemIDs, before: targetItemID)
+        }
+        draggedItemIDs = []
         dropTargetID = nil
         isDroppingAtEnd = false
         return true
@@ -429,15 +443,14 @@ private struct GridPhotoDropDelegate: DropDelegate {
 
 private struct GridPhotoDropToEndDelegate: DropDelegate {
     let model: AppModel
-    @Binding var draggedItemID: PhotoItem.ID?
+    @Binding var draggedItemIDs: Set<PhotoItem.ID>
     @Binding var dropTargetID: PhotoItem.ID?
     @Binding var isDroppingAtEnd: Bool
 
     func dropEntered(info _: DropInfo) {
-        guard let draggedItemID else { return }
+        guard !draggedItemIDs.isEmpty else { return }
         dropTargetID = nil
         isDroppingAtEnd = true
-        model.movePhotoToEnd(withID: draggedItemID)
     }
 
     func dropUpdated(info _: DropInfo) -> DropProposal? {
@@ -449,7 +462,10 @@ private struct GridPhotoDropToEndDelegate: DropDelegate {
     }
 
     func performDrop(info _: DropInfo) -> Bool {
-        draggedItemID = nil
+        if !draggedItemIDs.isEmpty {
+            model.movePhotosToEnd(withIDs: draggedItemIDs)
+        }
+        draggedItemIDs = []
         dropTargetID = nil
         isDroppingAtEnd = false
         return true
