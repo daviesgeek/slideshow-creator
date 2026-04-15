@@ -111,11 +111,11 @@ private struct PhotoGridCellNSView: NSViewRepresentable {
             onFlagToggle: @escaping (String, Bool) -> Void,
             dragProvider: @escaping () -> NSItemProvider
         ) {
-            _ = onSelect
-            _ = onThumbnailTap
-            _ = onExcludeToggle
-            _ = onFlagToggle
-            _ = dragProvider
+            self.onSelect = onSelect
+            self.onThumbnailTap = onThumbnailTap
+            self.onExcludeToggle = onExcludeToggle
+            self.onFlagToggle = onFlagToggle
+            self.dragProvider = dragProvider
         }
     }
 
