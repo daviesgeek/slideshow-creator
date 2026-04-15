@@ -78,6 +78,8 @@ private struct PhotoGridCellNSView: NSViewRepresentable {
         c.onFlagToggle = onFlagToggle
         c.dragProvider = dragProvider
 
+        nsView.configureWithCoordinator(c)
+
         nsView.updateContent(
             item: item,
             shortcutFlags: shortcutFlags,
@@ -138,20 +140,32 @@ private struct PhotoGridCellNSView: NSViewRepresentable {
             layer?.cornerRadius = 10
             layer?.masksToBounds = true
 
-            // Placeholder content initially
-            updateHostingView(
-                content: buildCellContent(
-                    item: PhotoItem(url: URL(fileURLWithPath: "/"), isExcluded: false, flags: []),
-                    shortcutFlags: [],
-                    isSelected: false,
-                    isDropTarget: false,
-                    thumbnailHeight: 120,
-                    thumbnailMaxPixelSize: 120,
-                    onExcludeToggle: { _ in },
-                    onFlagToggle: { _, _ in },
-                    dragProvider: { NSItemProvider() }
-                )
-            )
+            let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+            hostingView.translatesAutoresizingMaskIntoConstraints = false
+            hostingView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            hostingView.setContentHuggingPriority(.defaultLow, for: .vertical)
+            hostingView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            hostingView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+            let clickView = ClickTrackingView()
+            clickView.translatesAutoresizingMaskIntoConstraints = false
+
+            addSubview(hostingView)
+            addSubview(clickView)
+
+            NSLayoutConstraint.activate([
+                hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                hostingView.topAnchor.constraint(equalTo: topAnchor),
+                hostingView.bottomAnchor.constraint(equalTo: bottomAnchor),
+                clickView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                clickView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                clickView.topAnchor.constraint(equalTo: topAnchor),
+                clickView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+
+            self.hostingView = hostingView
+            self.clickView = clickView
         }
 
         func updateContent(
@@ -179,51 +193,18 @@ private struct PhotoGridCellNSView: NSViewRepresentable {
                 dragProvider: dragProvider
             )
 
-            updateHostingView(content: content)
+            hostingView?.rootView = content
+            clickView?.onClick = { [weak self] flags in
+                self?.coordinator?.onSelect(flags)
+            }
+            clickView?.onDoubleClick = { [weak self] in
+                self?.coordinator?.onThumbnailTap()
+            }
 
             layer?.backgroundColor = isSelected
                 ? NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
                 : NSColor.windowBackgroundColor.withAlphaComponent(0.04).cgColor
             layer?.opacity = Float(item.isExcluded ? 0.45 : 1.0)
-        }
-
-        private func updateHostingView(content: AnyView) {
-            let newHosting = NSHostingView(rootView: content)
-            newHosting.translatesAutoresizingMaskIntoConstraints = false
-            newHosting.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            newHosting.setContentHuggingPriority(.defaultLow, for: .vertical)
-            newHosting.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            newHosting.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-
-            let newClickView = ClickTrackingView()
-            newClickView.translatesAutoresizingMaskIntoConstraints = false
-            newClickView.onClick = { [weak self] flags in
-                self?.coordinator?.onSelect(flags)
-            }
-            newClickView.onDoubleClick = { [weak self] in
-                self?.coordinator?.onThumbnailTap()
-            }
-
-            // Remove old views
-            hostingView?.removeFromSuperview()
-            clickView?.removeFromSuperview()
-
-            addSubview(newHosting)
-            addSubview(newClickView)
-
-            NSLayoutConstraint.activate([
-                newHosting.leadingAnchor.constraint(equalTo: leadingAnchor),
-                newHosting.trailingAnchor.constraint(equalTo: trailingAnchor),
-                newHosting.topAnchor.constraint(equalTo: topAnchor),
-                newHosting.bottomAnchor.constraint(equalTo: bottomAnchor),
-                newClickView.leadingAnchor.constraint(equalTo: leadingAnchor),
-                newClickView.trailingAnchor.constraint(equalTo: trailingAnchor),
-                newClickView.topAnchor.constraint(equalTo: topAnchor),
-                newClickView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            ])
-
-            hostingView = newHosting
-            clickView = newClickView
         }
 
         private func buildCellContent(
