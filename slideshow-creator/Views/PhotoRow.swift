@@ -6,6 +6,7 @@ struct PhotoRow: View {
     let shortcutFlags: [String]
     let isSelected: Bool
     let isMissing: Bool
+    let effectiveSecondsPerPhoto: Double
     let effectiveTransitionToNext: PhotoTransitionStyle
     let effectiveTransitionDurationToNext: Double
     let dragProvider: (() -> NSItemProvider)?
@@ -13,6 +14,7 @@ struct PhotoRow: View {
     let onRelink: () -> Void
     let onExcludeToggle: (Bool) -> Void
     let onFlagToggle: (String, Bool) -> Void
+    let onSecondsOverrideChange: (Double?) -> Void
     let onTransitionToNextChange: (PhotoTransitionStyle?) -> Void
     let onTransitionDurationToNextChange: (Double?) -> Void
 
@@ -84,6 +86,18 @@ struct PhotoRow: View {
                 }
 
                 HStack(spacing: 8) {
+                    Toggle("Override default duration", isOn: secondsOverrideBinding)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+
+                    SecondsPerPhotoField(
+                        label: "Photo duration:",
+                        value: secondsPerPhotoBinding
+                    )
+                    .disabled(!secondsOverrideBinding.wrappedValue)
+                }
+
+                HStack(spacing: 8) {
                     Toggle("Override default", isOn: transitionOverrideBinding)
                         .toggleStyle(.checkbox)
                         .font(.caption)
@@ -116,6 +130,26 @@ struct PhotoRow: View {
 }
 
 extension PhotoRow {
+    private var secondsOverrideBinding: Binding<Bool> {
+        Binding(
+            get: { item.secondsOverride != nil },
+            set: { isEnabled in
+                if isEnabled {
+                    onSecondsOverrideChange(item.secondsOverride ?? effectiveSecondsPerPhoto)
+                } else {
+                    onSecondsOverrideChange(nil)
+                }
+            }
+        )
+    }
+
+    private var secondsPerPhotoBinding: Binding<Double> {
+        Binding(
+            get: { item.secondsOverride ?? effectiveSecondsPerPhoto },
+            set: { onSecondsOverrideChange($0) }
+        )
+    }
+
     private var transitionOverrideBinding: Binding<Bool> {
         Binding(
             get: { item.transitionToNext != nil || item.transitionDurationToNext != nil },

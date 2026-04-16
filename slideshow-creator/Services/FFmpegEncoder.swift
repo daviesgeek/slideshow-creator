@@ -15,6 +15,7 @@ enum FFmpegEncoder {
     struct TransitionPlan {
         let internalTransitions: [BoundaryTransition]
         let terminalTransition: BoundaryTransition?
+        let contentDurations: [Double]
         let inputDurations: [Double]
         let totalDuration: Double
     }
@@ -93,8 +94,7 @@ enum FFmpegEncoder {
                     height: height,
                     fps: fps,
                     videoEncoder: videoEncoder,
-                    transitionPlan: transitionPlan,
-                    secondsPerImage: secondsPerImage
+                    transitionPlan: transitionPlan
                 )
                 process.standardOutput = stdoutPipe
                 process.standardError = progressPipe
@@ -192,22 +192,29 @@ enum FFmpegEncoder {
 
         let normalizedFPS = max(1, fps)
         let frameQuantum = 1.0 / Double(normalizedFPS)
-        guard secondsPerImage > frameQuantum else {
-            throw AppError.invalidTransition("Seconds/photo must be greater than one frame at the selected FPS.")
-        }
-        let maxTransitionDuration = max(frameQuantum, secondsPerImage - frameQuantum)
+        let minimumPhotoDuration = frameQuantum * 2
 
-        func normalizedTransitionDuration(_ value: Double) -> Double {
+        func normalizedDuration(_ value: Double) -> Double {
             let rounded = (value / frameQuantum).rounded() * frameQuantum
             return max(frameQuantum, rounded)
         }
 
-        func resolvedTransitionDuration(_ value: Double) -> Double {
-            let rounded = normalizedTransitionDuration(value)
-            if rounded >= secondsPerImage {
-                return min(1.0, maxTransitionDuration)
+        func resolvedPhotoDuration(_ value: Double) -> Double {
+            max(minimumPhotoDuration, normalizedDuration(value))
+        }
+
+        func resolvedTransitionDuration(_ value: Double, maxAllowed: Double) -> Double {
+            guard maxAllowed > 0 else { return 0 }
+
+            let rounded = normalizedDuration(value)
+            if rounded >= maxAllowed {
+                return min(1.0, maxAllowed)
             }
-            return min(rounded, maxTransitionDuration)
+            return min(rounded, maxAllowed)
+        }
+
+        let contentDurations = items.map { item in
+            resolvedPhotoDuration(item.secondsOverride ?? secondsPerImage)
         }
 
         var internalTransitions: [BoundaryTransition] = []
@@ -222,7 +229,13 @@ enum FFmpegEncoder {
             }
 
             let durationValue = items[index].transitionDurationToNext ?? defaultTransitionDurationToNext
-            let duration = resolvedTransitionDuration(durationValue)
+            let maxAllowed = min(contentDurations[index], contentDurations[index + 1]) - frameQuantum
+            let duration = resolvedTransitionDuration(durationValue, maxAllowed: maxAllowed)
+
+            guard duration > 0 else {
+                internalTransitions.append(BoundaryTransition(style: .none, duration: 0))
+                continue
+            }
 
             internalTransitions.append(BoundaryTransition(style: style, duration: duration))
         }
@@ -234,24 +247,28 @@ enum FFmpegEncoder {
                 terminalTransition = nil
             } else {
                 let durationValue = lastItem.transitionDurationToNext ?? defaultTransitionDurationToNext
-                let duration = resolvedTransitionDuration(durationValue)
+                let maxAllowed = contentDurations[items.count - 1] - frameQuantum
+                let duration = resolvedTransitionDuration(durationValue, maxAllowed: maxAllowed)
 
-                terminalTransition = BoundaryTransition(style: style, duration: duration)
+                terminalTransition = duration > 0
+                    ? BoundaryTransition(style: style, duration: duration)
+                    : nil
             }
         } else {
             terminalTransition = nil
         }
 
-        var inputDurations = Array(repeating: secondsPerImage, count: items.count)
+        var inputDurations = contentDurations
         for index in internalTransitions.indices {
             guard internalTransitions[index].style != .none, internalTransitions[index].duration > 0 else { continue }
             inputDurations[index] += internalTransitions[index].duration
         }
 
-        let totalDuration = Double(items.count) * secondsPerImage
+        let totalDuration = contentDurations.reduce(0, +)
         return TransitionPlan(
             internalTransitions: internalTransitions,
             terminalTransition: terminalTransition,
+            contentDurations: contentDurations,
             inputDurations: inputDurations,
             totalDuration: totalDuration
         )
@@ -265,8 +282,7 @@ enum FFmpegEncoder {
         height: Int,
         fps: Int,
         videoEncoder: VideoEncoder,
-        transitionPlan: TransitionPlan,
-        secondsPerImage: Double
+        transitionPlan: TransitionPlan
     ) -> [String] {
         let targetVideoBitrate = recommendedVideoBitrate(width: width, height: height, fps: fps)
 
@@ -310,16 +326,15 @@ enum FFmpegEncoder {
             }
 
             var currentLabel = "p\(range.lowerBound)"
-            var localTransitionIndex = 0
+            var cumulativeDuration = transitionPlan.contentDurations[range.lowerBound]
 
             for boundaryIndex in range.lowerBound..<range.upperBound {
                 let transition = transitionPlan.internalTransitions[boundaryIndex]
                 guard transition.style != .none, transition.duration > 0 else { continue }
 
-                localTransitionIndex += 1
                 let nextLabel = "p\(boundaryIndex + 1)"
                 let outputLabel = "g\(groupIndex)_x\(boundaryIndex)"
-                let offset = Double(localTransitionIndex) * secondsPerImage
+                let offset = cumulativeDuration
 
                 filterParts.append(
                     "[\(currentLabel)][\(nextLabel)]" +
@@ -328,6 +343,7 @@ enum FFmpegEncoder {
                 )
 
                 currentLabel = outputLabel
+                cumulativeDuration += transitionPlan.contentDurations[boundaryIndex + 1]
             }
 
             groupOutputLabels.append(currentLabel)

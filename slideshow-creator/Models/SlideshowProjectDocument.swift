@@ -16,6 +16,7 @@ struct SlideshowProjectDocument: Codable {
     let photoFlagsByName: [String: [String]]?
     let photoRelinkedPathByName: [String: String]?
     let photoRelinkedBookmarkByName: [String: Data]?
+    let photoSecondsOverrideByName: [String: Double]?
     let photoTransitionToNextByName: [String: PhotoTransitionStyle]?
     let photoTransitionDurationToNextByName: [String: Double]?
 }

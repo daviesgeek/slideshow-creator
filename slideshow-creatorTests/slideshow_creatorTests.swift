@@ -89,4 +89,38 @@ struct slideshow_creatorTests {
         #expect(plan.inputDurations[0] < 6)
     }
 
+    @Test func transitionPlanUsesPerPhotoDurationOverrides() throws {
+        let items = [
+            PhotoItem(
+                url: URL(fileURLWithPath: "/tmp/a.jpg"),
+                secondsOverride: 2.0,
+                transitionToNext: .fade,
+                transitionDurationToNext: 0.75
+            ),
+            PhotoItem(
+                url: URL(fileURLWithPath: "/tmp/b.jpg"),
+                secondsOverride: 4.0,
+                transitionToNext: PhotoTransitionStyle.none
+            ),
+            PhotoItem(
+                url: URL(fileURLWithPath: "/tmp/c.jpg"),
+                secondsOverride: 1.5,
+                transitionToNext: .fade,
+                transitionDurationToNext: 0.5
+            )
+        ]
+
+        let plan = try FFmpegEncoder.makeTransitionPlan(
+            items: items,
+            secondsPerImage: 3,
+            defaultTransitionToNext: .none,
+            defaultTransitionDurationToNext: 1,
+            fps: 30
+        )
+
+        #expect(plan.contentDurations == [2.0, 4.0, 1.5])
+        #expect(plan.inputDurations[0] > 2.0)
+        #expect(plan.totalDuration == 7.5)
+    }
+
 }

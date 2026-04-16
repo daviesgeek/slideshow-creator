@@ -10,6 +10,7 @@ struct PhotoItem: Identifiable, Equatable {
     var isRelinked = false
     var relinkedPath: String?
     var relinkedBookmark: Data?
+    var secondsOverride: Double?
     var transitionToNext: PhotoTransitionStyle?
     var transitionDurationToNext: Double?
 
@@ -23,6 +24,7 @@ struct PhotoItem: Identifiable, Equatable {
         isRelinked: Bool = false,
         relinkedPath: String? = nil,
         relinkedBookmark: Data? = nil,
+        secondsOverride: Double? = nil,
         transitionToNext: PhotoTransitionStyle? = nil,
         transitionDurationToNext: Double? = nil
     ) {
@@ -35,6 +37,7 @@ struct PhotoItem: Identifiable, Equatable {
         self.isRelinked = isRelinked
         self.relinkedPath = relinkedPath
         self.relinkedBookmark = relinkedBookmark
+        self.secondsOverride = secondsOverride
         self.transitionToNext = transitionToNext
         self.transitionDurationToNext = transitionDurationToNext
     }
