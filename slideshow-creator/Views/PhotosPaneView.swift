@@ -9,6 +9,7 @@ struct PhotosPaneView: View {
 
     @State private var draggedPhotoIDs: Set<PhotoItem.ID> = []
     @State private var gridDropTargetID: PhotoItem.ID?
+    @State private var gridDropTargetEdge: GridDropEdge?
     @State private var isGridDroppingAtEnd = false
     @State private var gridAvailableWidth: CGFloat = 0
 
@@ -18,6 +19,13 @@ struct PhotosPaneView: View {
     }
     private var selectedPhotoCount: Int { visibleSelectedPhotoIDs.count }
     private var hasSelection: Bool { selectedPhotoCount > 0 }
+    private var selectedDragPreviewItems: [PhotoItem] {
+        guard !visibleSelectedPhotoIDs.isEmpty else { return [] }
+        return filteredItems.filter { visibleSelectedPhotoIDs.contains($0.id) }
+    }
+    private var selectedDragSelectionCount: Int {
+        max(1, visibleSelectedPhotoIDs.count)
+    }
     private let gridMinCellWidth: CGFloat = 120
     private let gridMaxCellWidth: CGFloat = 280
     private let gridSpacing: CGFloat = 10
@@ -30,6 +38,12 @@ struct PhotosPaneView: View {
 
     private var gridThumbnailHeight: CGFloat {
         max(90, gridCellWidth * gridThumbnailHeightScale)
+    }
+
+    private var gridEffectiveCellWidth: CGFloat {
+        let totalSpacing = CGFloat(max(gridColumnCount - 1, 0)) * gridSpacing
+        let available = max(0, gridAvailableWidth - totalSpacing)
+        return max(1, available / CGFloat(gridColumnCount))
     }
 
     private var gridThumbnailMaxPixelSize: CGFloat {
@@ -173,11 +187,16 @@ struct PhotosPaneView: View {
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: gridCellWidth), spacing: gridSpacing)], spacing: gridSpacing) {
                     ForEach(filteredItems) { item in
+                        let isInVisibleSelection = visibleSelectedPhotoIDs.contains(item.id)
+
                         PhotoGridCellView(
                             item: item,
                             shortcutFlags: model.shortcutFlags,
-                            isSelected: visibleSelectedPhotoIDs.contains(item.id),
+                            isSelected: isInVisibleSelection,
                             isDropTarget: gridDropTargetID == item.id,
+                            isDropTargetOnTrailingEdge: gridDropTargetEdge == .trailing,
+                            dragPreviewItems: isInVisibleSelection ? selectedDragPreviewItems : [item],
+                            dragSelectionCount: isInVisibleSelection ? selectedDragSelectionCount : 1,
                             thumbnailHeight: gridThumbnailHeight,
                             thumbnailMaxPixelSize: gridThumbnailMaxPixelSize,
                             onSelect: { modifiers in
@@ -200,9 +219,12 @@ struct PhotosPaneView: View {
                             of: [UTType.text],
                             delegate: GridPhotoDropDelegate(
                                 targetItemID: item.id,
+                                visibleItemIDs: filteredItems.map(\.id),
+                                cellWidth: gridEffectiveCellWidth,
                                 model: model,
                                 draggedItemIDs: $draggedPhotoIDs,
                                 dropTargetID: $gridDropTargetID,
+                                dropTargetEdge: $gridDropTargetEdge,
                                 isDroppingAtEnd: $isGridDroppingAtEnd
                             )
                         )
@@ -225,6 +247,7 @@ struct PhotosPaneView: View {
                                 model: model,
                                 draggedItemIDs: $draggedPhotoIDs,
                                 dropTargetID: $gridDropTargetID,
+                                dropTargetEdge: $gridDropTargetEdge,
                                 isDroppingAtEnd: $isGridDroppingAtEnd
                             )
                         )
@@ -412,30 +435,78 @@ struct PhotosPaneView: View {
     }
 }
 
+private enum GridDropEdge {
+    case leading
+    case trailing
+}
+
 private struct GridPhotoDropDelegate: DropDelegate {
     let targetItemID: PhotoItem.ID
+    let visibleItemIDs: [PhotoItem.ID]
+    let cellWidth: CGFloat
     let model: AppModel
     @Binding var draggedItemIDs: Set<PhotoItem.ID>
     @Binding var dropTargetID: PhotoItem.ID?
+    @Binding var dropTargetEdge: GridDropEdge?
     @Binding var isDroppingAtEnd: Bool
 
-    func dropEntered(info _: DropInfo) {
+    private func edge(for info: DropInfo) -> GridDropEdge {
+        info.location.x < (max(1, cellWidth) * 0.5) ? .leading : .trailing
+    }
+
+    private func firstVisibleIDAfterTargetExcludingDragged() -> PhotoItem.ID? {
+        guard let targetIndex = visibleItemIDs.firstIndex(of: targetItemID), targetIndex + 1 < visibleItemIDs.count else {
+            return nil
+        }
+
+        for id in visibleItemIDs[(targetIndex + 1)...] where !draggedItemIDs.contains(id) {
+            return id
+        }
+
+        return nil
+    }
+
+    func dropEntered(info: DropInfo) {
         guard !draggedItemIDs.isEmpty else { return }
         guard !draggedItemIDs.contains(targetItemID) else { return }
+
         isDroppingAtEnd = false
         dropTargetID = targetItemID
+        dropTargetEdge = edge(for: info)
     }
 
-    func dropUpdated(info _: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard !draggedItemIDs.isEmpty else { return nil }
+        guard !draggedItemIDs.contains(targetItemID) else { return nil }
+
+        isDroppingAtEnd = false
+        dropTargetID = targetItemID
+        dropTargetEdge = edge(for: info)
+        return DropProposal(operation: .move)
     }
 
-    func performDrop(info _: DropInfo) -> Bool {
-        if !draggedItemIDs.isEmpty {
-            model.movePhotos(withIDs: draggedItemIDs, before: targetItemID)
+    func performDrop(info: DropInfo) -> Bool {
+        guard !draggedItemIDs.isEmpty else {
+            dropTargetID = nil
+            dropTargetEdge = nil
+            isDroppingAtEnd = false
+            return true
         }
+
+        switch edge(for: info) {
+        case .leading:
+            model.movePhotos(withIDs: draggedItemIDs, before: targetItemID)
+        case .trailing:
+            if let nextID = firstVisibleIDAfterTargetExcludingDragged() {
+                model.movePhotos(withIDs: draggedItemIDs, before: nextID)
+            } else {
+                model.movePhotosToEnd(withIDs: draggedItemIDs)
+            }
+        }
+
         draggedItemIDs = []
         dropTargetID = nil
+        dropTargetEdge = nil
         isDroppingAtEnd = false
         return true
     }
@@ -445,11 +516,13 @@ private struct GridPhotoDropToEndDelegate: DropDelegate {
     let model: AppModel
     @Binding var draggedItemIDs: Set<PhotoItem.ID>
     @Binding var dropTargetID: PhotoItem.ID?
+    @Binding var dropTargetEdge: GridDropEdge?
     @Binding var isDroppingAtEnd: Bool
 
     func dropEntered(info _: DropInfo) {
         guard !draggedItemIDs.isEmpty else { return }
         dropTargetID = nil
+        dropTargetEdge = nil
         isDroppingAtEnd = true
     }
 
@@ -467,6 +540,7 @@ private struct GridPhotoDropToEndDelegate: DropDelegate {
         }
         draggedItemIDs = []
         dropTargetID = nil
+        dropTargetEdge = nil
         isDroppingAtEnd = false
         return true
     }

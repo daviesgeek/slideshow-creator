@@ -2,21 +2,31 @@ import SwiftUI
 import AppKit
 import ImageIO
 
+private enum ThumbnailCacheKey {
+    nonisolated static func make(url: URL, maxPixelSize: CGFloat, scale: CGFloat) -> NSString {
+        let pixelSize = max(1, Int(ceil(maxPixelSize * max(scale, 1))))
+        return "\(url.path)#\(pixelSize)" as NSString
+    }
+}
+
+private nonisolated(unsafe) let thumbnailMemoryCache: NSCache<NSString, NSImage> = {
+    let cache = NSCache<NSString, NSImage>()
+    cache.countLimit = 500
+    return cache
+}()
+
 private actor ThumbnailPipeline {
     static let shared = ThumbnailPipeline()
 
-    private let cache = NSCache<NSString, NSImage>()
     private var inFlight: [String: Task<NSImage?, Never>] = [:]
 
-    private init() {
-        cache.countLimit = 500
-    }
+    private init() {}
 
     func thumbnail(for url: URL, maxPixelSize: CGFloat, scale: CGFloat) async -> NSImage? {
         let pixelSize = max(1, Int(ceil(maxPixelSize * max(scale, 1))))
-        let cacheKey = "\(url.path)#\(pixelSize)" as NSString
+        let cacheKey = ThumbnailCacheKey.make(url: url, maxPixelSize: maxPixelSize, scale: scale)
 
-        if let cached = cache.object(forKey: cacheKey) {
+        if let cached = thumbnailMemoryCache.object(forKey: cacheKey) {
             return cached
         }
 
@@ -32,7 +42,7 @@ private actor ThumbnailPipeline {
         inFlight[key] = task
         let image = await task.value
         if let image {
-            cache.setObject(image, forKey: cacheKey)
+            thumbnailMemoryCache.setObject(image, forKey: cacheKey)
         }
         inFlight[key] = nil
         return image
@@ -65,6 +75,11 @@ struct ThumbnailView: View {
 
     @Environment(\.displayScale) private var displayScale
     @State private var image: NSImage?
+
+    static func cachedThumbnail(for url: URL, maxPixelSize: CGFloat, scale: CGFloat) -> NSImage? {
+        let key = ThumbnailCacheKey.make(url: url, maxPixelSize: maxPixelSize, scale: scale)
+        return thumbnailMemoryCache.object(forKey: key)
+    }
 
     var body: some View {
         Group {
