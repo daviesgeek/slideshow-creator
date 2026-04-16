@@ -6,6 +6,8 @@ struct PhotosPaneView: View {
     @ObservedObject var model: AppModel
     let isKeyboardNavigationEnabled: Bool
     let onThumbnailTap: (PhotoItem) -> Void
+    let onRefresh: () -> Void
+    let onRelink: (PhotoItem.ID) -> Void
 
     @State private var draggedPhotoIDs: Set<PhotoItem.ID> = []
     @State private var gridDropTargetID: PhotoItem.ID?
@@ -56,6 +58,10 @@ struct PhotosPaneView: View {
 
     private var filteredItems: [PhotoItem] {
         model.filteredPhotoItems
+    }
+
+    private var missingPhotoCount: Int {
+        model.missingPhotoCount
     }
 
     private func keyEquivalent(for number: Int) -> KeyEquivalent {
@@ -149,6 +155,18 @@ struct PhotosPaneView: View {
 
             Spacer()
 
+            if missingPhotoCount > 0 {
+                Text("\(missingPhotoCount) missing")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+            }
+
+            Button("Refresh") {
+                onRefresh()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
             Text("Drag photos to reorder")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -166,6 +184,7 @@ struct PhotosPaneView: View {
                     item: item,
                     shortcutFlags: model.shortcutFlags,
                     isSelected: visibleSelectedPhotoIDs.contains(item.id),
+                    isMissing: item.isMissing,
                     dragProvider: {
                         beginPhotoDrag(for: item.id)
                         return NSItemProvider(object: item.id.uuidString as NSString)
@@ -173,6 +192,9 @@ struct PhotosPaneView: View {
                     onActivate: {
                         model.selectPhoto(item.id)
                         onThumbnailTap(item)
+                    },
+                    onRelink: {
+                        onRelink(item.id)
                     },
                     onExcludeToggle: { isExcluded in
                         model.setPhotoExcluded(isExcluded, for: item.id)
@@ -208,6 +230,7 @@ struct PhotosPaneView: View {
                             item: item,
                             shortcutFlags: model.shortcutFlags,
                             isSelected: isInVisibleSelection,
+                            isMissing: item.isMissing,
                             isDropTarget: gridDropTargetID == item.id,
                             isDropTargetOnTrailingEdge: gridDropTargetEdge == .trailing,
                             dragPreviewItems: isInVisibleSelection ? selectedDragPreviewItems : [item],
@@ -220,6 +243,9 @@ struct PhotosPaneView: View {
                             onActivate: {
                                 model.selectPhoto(item.id)
                                 onThumbnailTap(item)
+                            },
+                            onRelink: {
+                                onRelink(item.id)
                             },
                             onFlagToggle: { flag, isEnabled in
                                 model.setFlag(flag, enabled: isEnabled, for: item.id)

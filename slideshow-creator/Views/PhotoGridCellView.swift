@@ -5,6 +5,7 @@ struct PhotoGridCellView: View {
     let item: PhotoItem
     let shortcutFlags: [String]
     let isSelected: Bool
+    let isMissing: Bool
     let isDropTarget: Bool
     let isDropTargetOnTrailingEdge: Bool
     let dragPreviewItems: [PhotoItem]
@@ -13,6 +14,7 @@ struct PhotoGridCellView: View {
     let thumbnailMaxPixelSize: CGFloat
     let onSelect: (NSEvent.ModifierFlags) -> Void
     let onActivate: () -> Void
+    let onRelink: () -> Void
     let onFlagToggle: (String, Bool) -> Void
     let dragProvider: () -> NSItemProvider
 
@@ -40,6 +42,16 @@ struct PhotoGridCellView: View {
                 Text(item.name)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
+                    .foregroundStyle(isMissing ? .red : .primary)
+
+                if isMissing {
+                    Button("Relink…") {
+                        onRelink()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                }
 
                 if !shortcutFlags.isEmpty {
                     PhotoFlagControlsView(
@@ -65,12 +77,15 @@ struct PhotoGridCellView: View {
 
     private var cellBackground: some View {
         RoundedRectangle(cornerRadius: 10)
-            .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04))
+            .fill(isSelected ? Color.accentColor.opacity(0.12) : (isMissing ? Color.red.opacity(0.08) : Color.primary.opacity(0.04)))
     }
 
     private var cellBorder: some View {
         RoundedRectangle(cornerRadius: 10)
-            .stroke(isSelected ? Color.accentColor.opacity(0.8) : Color.clear, lineWidth: 2)
+            .stroke(
+                isSelected ? Color.accentColor.opacity(0.8) : (isMissing ? Color.red.opacity(0.75) : Color.clear),
+                lineWidth: isSelected || isMissing ? 2 : 0
+            )
     }
 
     private var dragPreview: some View {

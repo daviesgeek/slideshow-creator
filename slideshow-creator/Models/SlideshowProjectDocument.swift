@@ -14,4 +14,6 @@ struct SlideshowProjectDocument: Codable {
     let exportMatchMode: String?
     let photoExcludedByName: [String: Bool]?
     let photoFlagsByName: [String: [String]]?
+    let photoRelinkedPathByName: [String: String]?
+    let photoRelinkedBookmarkByName: [String: Data]?
 }

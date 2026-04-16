@@ -5,8 +5,10 @@ struct PhotoRow: View {
     let item: PhotoItem
     let shortcutFlags: [String]
     let isSelected: Bool
+    let isMissing: Bool
     let dragProvider: (() -> NSItemProvider)?
     let onActivate: () -> Void
+    let onRelink: () -> Void
     let onExcludeToggle: (Bool) -> Void
     let onFlagToggle: (String, Bool) -> Void
 
@@ -31,6 +33,16 @@ struct PhotoRow: View {
                 HStack(spacing: 8) {
                     Text(item.name)
                         .lineLimit(1)
+                        .foregroundStyle(isMissing ? .red : .primary)
+
+                    if isMissing {
+                        Button("Relink…") {
+                            onRelink()
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.red)
+                    }
 
                     Button(item.isExcluded ? "Include (X)" : "Exclude (X)") {
                         onExcludeToggle(!item.isExcluded)
@@ -51,8 +63,14 @@ struct PhotoRow: View {
 
                 Text(item.url.path)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isMissing ? .red : .secondary)
                     .lineLimit(1)
+
+                if isMissing {
+                    Text("Missing file")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.red)
+                }
 
                 if !item.flags.isEmpty {
                     Text(item.flags.sorted().joined(separator: ", "))
@@ -65,7 +83,7 @@ struct PhotoRow: View {
         .opacity(item.isExcluded ? 0.45 : 1)
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
-        .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        .background(isSelected ? Color.accentColor.opacity(0.12) : (isMissing ? Color.red.opacity(0.08) : Color.clear))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
         .modifier(PhotoRowActivationInteractions(isSelected: isSelected, onActivate: onActivate))

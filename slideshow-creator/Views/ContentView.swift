@@ -40,9 +40,19 @@ struct ContentView: View {
                     minLeftWidth: leftPaneMinWidth,
                     minRightWidth: rightPaneMinWidth
                 ) {
-                    PhotosPaneView(model: model, isKeyboardNavigationEnabled: !isPreviewPresented) { item in
-                        openPreview(for: item)
-                    }
+                    PhotosPaneView(
+                        model: model,
+                        isKeyboardNavigationEnabled: !isPreviewPresented,
+                        onThumbnailTap: { item in
+                            openPreview(for: item)
+                        },
+                        onRefresh: {
+                            model.refreshPhotos()
+                        },
+                        onRelink: { id in
+                            model.relinkPhoto(id: id)
+                        }
+                    )
                     .frame(minWidth: leftPaneMinWidth, maxWidth: .infinity, maxHeight: .infinity)
                 } right: {
                     SoundtracksPaneView(model: model)

@@ -283,42 +283,109 @@ final class AppModel: ObservableObject {
         loadFolder(folder)
     }
 
+    func refreshPhotos() {
+        guard let folderURL else {
+            status = "Choose a photos folder first."
+            return
+        }
+
+        loadFolder(folderURL, preservingMissingItems: true, isManualRefresh: true)
+    }
+
     func loadFolder(_ folder: URL) {
+        loadFolder(folder, preservingMissingItems: false)
+    }
+
+    private func loadFolder(
+        _ folder: URL,
+        preservingMissingItems: Bool,
+        isManualRefresh: Bool = false
+    ) {
         do {
-            let urls = try FileManager.default.contentsOfDirectory(
-                at: folder,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )
+            let imageURLs = try normalizedImageURLs(in: folder)
+            let scannedByReference = Dictionary(uniqueKeysWithValues: imageURLs.map { ($0.lastPathComponent, $0) })
+            let existingByReference = Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, $0) })
 
-            let imageURLs = urls
-                .filter { allowedImageExtensions.contains($0.pathExtension.lowercased()) }
-                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            var updatedItems: [PhotoItem] = imageURLs.map { url in
+                let referenceName = url.lastPathComponent
+                if var existing = existingByReference[referenceName] {
+                    if existing.isRelinked {
+                        if let relinkedURL = resolveRelinkedPhotoURL(
+                            bookmarkData: existing.relinkedBookmark,
+                            fallbackPath: existing.relinkedPath
+                        ) {
+                            existing.url = relinkedURL
+                            existing.isMissing = false
+                        } else {
+                            existing.isMissing = true
+                        }
+                    } else {
+                        existing.url = url
+                        existing.isMissing = false
+                    }
+                    return existing
+                }
 
-            let existingByName = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0) })
+                return PhotoItem(referenceName: referenceName, url: url)
+            }
 
-            guard !imageURLs.isEmpty else {
-                folderURL = folder
-                items = []
+            if preservingMissingItems {
+                let representedReferences = Set(updatedItems.map(\.referenceName))
+                let leftovers = items.compactMap { existing -> PhotoItem? in
+                    guard !representedReferences.contains(existing.referenceName) else { return nil }
+
+                    var carried = existing
+                    if existing.isRelinked,
+                       let relinkedURL = resolveRelinkedPhotoURL(
+                           bookmarkData: existing.relinkedBookmark,
+                           fallbackPath: existing.relinkedPath
+                       ) {
+                        carried.url = relinkedURL
+                        carried.isMissing = false
+                    } else {
+                        carried.isMissing = true
+                    }
+                    return carried
+                }
+                updatedItems.append(contentsOf: leftovers)
+            }
+
+            let previousReferences = Set(items.map(\.referenceName))
+            folderURL = folder
+            items = updatedItems
+            refreshPhotoAvailability(using: scannedByReference)
+
+            guard !items.isEmpty else {
                 clearPhotoSelection()
                 status = AppError.noImages.localizedDescription
                 return
             }
 
-            folderURL = folder
-            items = imageURLs.map { url in
-                let name = url.lastPathComponent
-                if let existing = existingByName[name] {
-                    return PhotoItem(url: url, isExcluded: existing.isExcluded, flags: existing.flags)
-                }
-                return PhotoItem(url: url)
-            }
             selectedPhotoID = selectedPhotoID.flatMap { selected in
                 items.contains(where: { $0.id == selected }) ? selected : nil
             } ?? items.first?.id
             selectedPhotoIDs = selectedPhotoID.map { [$0] } ?? []
             selectionAnchorPhotoID = selectedPhotoID
-            status = "Loaded \(items.count) images."
+
+            let addedCount = imageURLs.reduce(into: 0) { count, url in
+                if !previousReferences.contains(url.lastPathComponent) {
+                    count += 1
+                }
+            }
+            let missingCount = items.filter(\.isMissing).count
+            if isManualRefresh {
+                if addedCount > 0, missingCount > 0 {
+                    status = "Added \(addedCount) new photo(s). \(missingCount) photo(s) are missing."
+                } else if addedCount > 0 {
+                    status = "Added \(addedCount) new photo(s)."
+                } else if missingCount > 0 {
+                    status = "\(missingCount) photo(s) are missing."
+                } else {
+                    status = "No changes found."
+                }
+            } else {
+                status = "Loaded \(items.count) images."
+            }
         } catch {
             status = error.localizedDescription
         }
@@ -419,7 +486,9 @@ final class AppModel: ObservableObject {
                     reorderPhotos(using: document.photoOrder)
                     applyPhotoMetadata(
                         excludedByName: document.photoExcludedByName ?? [:],
-                        flagsByName: document.photoFlagsByName ?? [:]
+                        flagsByName: document.photoFlagsByName ?? [:],
+                        relinkedPathByName: document.photoRelinkedPathByName ?? [:],
+                        relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:]
                     )
                 case .notConfigured:
                     folderURL = nil
@@ -431,7 +500,9 @@ final class AppModel: ObservableObject {
                         reorderPhotos(using: document.photoOrder)
                         applyPhotoMetadata(
                             excludedByName: document.photoExcludedByName ?? [:],
-                            flagsByName: document.photoFlagsByName ?? [:]
+                            flagsByName: document.photoFlagsByName ?? [:],
+                            relinkedPathByName: document.photoRelinkedPathByName ?? [:],
+                            relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:]
                         )
                     } else {
                         folderURL = nil
@@ -544,13 +615,22 @@ final class AppModel: ObservableObject {
             relativeTo: nil
         )
 
+        let relinkedPathByName = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, String)? in
+            guard item.isRelinked, let path = item.relinkedPath else { return nil }
+            return (item.referenceName, path)
+        })
+        let relinkedBookmarkByName = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, Data)? in
+            guard item.isRelinked, let bookmark = item.relinkedBookmark else { return nil }
+            return (item.referenceName, bookmark)
+        })
+
         return SlideshowProjectDocument(
             version: 1,
             photosFolderPath: folderURL?.path,
             soundtrackFolderPath: soundtrackFolderURL?.path,
             photosFolderBookmark: photosBookmark,
             soundtrackFolderBookmark: soundtrackBookmark,
-            photoOrder: items.map(\.name),
+            photoOrder: items.map(\.referenceName),
             soundtrackOrder: soundtracks.map(\.name),
             settings: ProjectSettings(
                 secondsPerImage: secondsPerImage,
@@ -562,8 +642,10 @@ final class AppModel: ObservableObject {
             availableFlags: availableFlags,
             selectedExportFlags: Array(selectedExportFlags),
             exportMatchMode: exportMatchMode.rawValue,
-            photoExcludedByName: Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.isExcluded) }),
-            photoFlagsByName: Dictionary(uniqueKeysWithValues: items.map { ($0.name, Array($0.flags)) })
+            photoExcludedByName: Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, $0.isExcluded) }),
+            photoFlagsByName: Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, Array($0.flags)) }),
+            photoRelinkedPathByName: relinkedPathByName,
+            photoRelinkedBookmarkByName: relinkedBookmarkByName
         )
     }
 
@@ -606,6 +688,90 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private func resolveRelinkedPhotoURL(bookmarkData: Data?, fallbackPath: String?) -> URL? {
+        if let bookmarkData {
+            var isStale = false
+            if let bookmarkedURL = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                let resolved = bookmarkedURL.standardizedFileURL
+                if FileManager.default.fileExists(atPath: resolved.path) {
+                    startSecurityScopedAccess(for: resolved)
+                    return resolved
+                }
+            }
+        }
+
+        if let fallbackPath,
+           !fallbackPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let fallbackURL = URL(fileURLWithPath: fallbackPath).standardizedFileURL
+            if FileManager.default.fileExists(atPath: fallbackURL.path) {
+                startSecurityScopedAccess(for: fallbackURL)
+                return fallbackURL
+            }
+        }
+
+        return nil
+    }
+
+    private func normalizedImageURLs(in folder: URL) throws -> [URL] {
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        return urls
+            .filter { allowedImageExtensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    private func fallbackURL(forReferenceName referenceName: String) -> URL {
+        if let folderURL {
+            return folderURL.appendingPathComponent(referenceName)
+        }
+        return URL(fileURLWithPath: referenceName)
+    }
+
+    private func refreshPhotoAvailability(using scannedByReference: [String: URL]? = nil) {
+        let folderByReference: [String: URL]
+        if let scannedByReference {
+            folderByReference = scannedByReference
+        } else if let folderURL,
+                  let scanned = try? normalizedImageURLs(in: folderURL) {
+            folderByReference = Dictionary(uniqueKeysWithValues: scanned.map { ($0.lastPathComponent, $0) })
+        } else {
+            folderByReference = [:]
+        }
+
+        for index in items.indices {
+            if items[index].isRelinked,
+               let relinkedURL = resolveRelinkedPhotoURL(
+                   bookmarkData: items[index].relinkedBookmark,
+                   fallbackPath: items[index].relinkedPath
+               ) {
+                items[index].url = relinkedURL
+                items[index].isMissing = false
+                continue
+            }
+
+            if items[index].isRelinked {
+                items[index].isMissing = true
+                continue
+            }
+
+            if let folderURL = folderByReference[items[index].referenceName] {
+                items[index].url = folderURL
+                items[index].isMissing = false
+            } else {
+                items[index].isMissing = true
+            }
+        }
+    }
+
     private func folderExists(at url: URL) -> Bool {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
@@ -635,9 +801,15 @@ final class AppModel: ObservableObject {
     private func reorderPhotos(using savedOrder: [String]) {
         guard !savedOrder.isEmpty else { return }
 
-        let byName = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0) })
-        let ordered = savedOrder.compactMap { byName[$0] }
-        let leftovers = items.filter { !savedOrder.contains($0.name) }
+        let byName = Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, $0) })
+        let ordered = savedOrder.map { referenceName in
+            byName[referenceName] ?? PhotoItem(
+                referenceName: referenceName,
+                url: fallbackURL(forReferenceName: referenceName),
+                isMissing: true
+            )
+        }
+        let leftovers = items.filter { !savedOrder.contains($0.referenceName) }
         items = ordered + leftovers
     }
 
@@ -652,13 +824,20 @@ final class AppModel: ObservableObject {
 
     private func applyPhotoMetadata(
         excludedByName: [String: Bool],
-        flagsByName: [String: [String]]
+        flagsByName: [String: [String]],
+        relinkedPathByName: [String: String],
+        relinkedBookmarkByName: [String: Data]
     ) {
         for index in items.indices {
-            let name = items[index].name
+            let name = items[index].referenceName
             items[index].isExcluded = excludedByName[name] ?? false
             items[index].flags = Set(flagsByName[name] ?? [])
+            items[index].relinkedPath = relinkedPathByName[name]
+            items[index].relinkedBookmark = relinkedBookmarkByName[name]
+            items[index].isRelinked = items[index].relinkedPath != nil || items[index].relinkedBookmark != nil
         }
+
+        refreshPhotoAvailability()
 
         if availableFlags.isEmpty {
             let discoveredFlags = Set(items.flatMap { $0.flags })
@@ -884,6 +1063,10 @@ final class AppModel: ObservableObject {
         filteredPhotoItems(for: photosExclusionFilter)
     }
 
+    var missingPhotoCount: Int {
+        items.filter(\.isMissing).count
+    }
+
     func selectPhoto(_ id: PhotoItem.ID?) {
         let normalizedID = id.flatMap { candidate in
             items.contains(where: { $0.id == candidate }) ? candidate : nil
@@ -1019,6 +1202,36 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func relinkPhoto(id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Relink"
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        guard allowedImageExtensions.contains(selectedURL.pathExtension.lowercased()) else {
+            status = "Selected file is not a supported image."
+            return
+        }
+
+        startSecurityScopedAccess(for: selectedURL)
+        let bookmarkData = try? selectedURL.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        items[index].url = selectedURL
+        items[index].isMissing = false
+        items[index].isRelinked = true
+        items[index].relinkedPath = selectedURL.path
+        items[index].relinkedBookmark = bookmarkData
+        status = "Relinked \(items[index].referenceName)."
+    }
+
     func moveSelectedPhotosUp(_ ids: Set<PhotoItem.ID>) {
         let selected = normalizedPhotoSelection(ids)
         guard !selected.isEmpty else { return }
@@ -1152,6 +1365,15 @@ final class AppModel: ObservableObject {
         let itemsToEncode = exportableItems
         guard !itemsToEncode.isEmpty else {
             status = AppError.noExportableImages.localizedDescription
+            return
+        }
+
+        let missingExportableItems = itemsToEncode.filter(\.isMissing)
+        guard missingExportableItems.isEmpty else {
+            status = "\(missingExportableItems.count) exportable photo(s) are missing. Relink or exclude them before encoding."
+            if let firstMissing = missingExportableItems.first {
+                selectPhoto(firstMissing.id)
+            }
             return
         }
 
