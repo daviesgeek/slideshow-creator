@@ -113,6 +113,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var hasUnsavedChanges = false
 
     @Published var secondsPerImage: Double = 3
+    @Published var defaultTransitionToNext: PhotoTransitionStyle = .none
+    @Published var defaultTransitionDurationToNext: Double = 1.0
     @Published var width: Int = 1920
     @Published var height: Int = 1080
     @Published var fps: Int = 30
@@ -223,6 +225,8 @@ final class AppModel: ObservableObject {
             exportMatchMode = .any
 
             secondsPerImage = 3
+            defaultTransitionToNext = .none
+            defaultTransitionDurationToNext = 1.0
             width = 1920
             height = 1080
             fps = 30
@@ -458,6 +462,8 @@ final class AppModel: ObservableObject {
                 stopAllSecurityScopedAccess()
 
                 secondsPerImage = document.settings.secondsPerImage
+                defaultTransitionToNext = document.settings.defaultTransitionStyle ?? .none
+                defaultTransitionDurationToNext = document.settings.defaultTransitionDuration ?? 1.0
                 width = document.settings.width
                 height = document.settings.height
                 fps = document.settings.fps
@@ -488,7 +494,9 @@ final class AppModel: ObservableObject {
                         excludedByName: document.photoExcludedByName ?? [:],
                         flagsByName: document.photoFlagsByName ?? [:],
                         relinkedPathByName: document.photoRelinkedPathByName ?? [:],
-                        relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:]
+                        relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:],
+                        transitionToNextByName: document.photoTransitionToNextByName ?? [:],
+                        transitionDurationToNextByName: document.photoTransitionDurationToNextByName ?? [:]
                     )
                 case .notConfigured:
                     folderURL = nil
@@ -502,7 +510,9 @@ final class AppModel: ObservableObject {
                             excludedByName: document.photoExcludedByName ?? [:],
                             flagsByName: document.photoFlagsByName ?? [:],
                             relinkedPathByName: document.photoRelinkedPathByName ?? [:],
-                            relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:]
+                            relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:],
+                            transitionToNextByName: document.photoTransitionToNextByName ?? [:],
+                            transitionDurationToNextByName: document.photoTransitionDurationToNextByName ?? [:]
                         )
                     } else {
                         folderURL = nil
@@ -623,6 +633,14 @@ final class AppModel: ObservableObject {
             guard item.isRelinked, let bookmark = item.relinkedBookmark else { return nil }
             return (item.referenceName, bookmark)
         })
+        let transitionToNextByName = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, PhotoTransitionStyle)? in
+            guard let transition = item.transitionToNext else { return nil }
+            return (item.referenceName, transition)
+        })
+        let transitionDurationToNextByName = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, Double)? in
+            guard let duration = item.transitionDurationToNext else { return nil }
+            return (item.referenceName, duration)
+        })
 
         return SlideshowProjectDocument(
             version: 1,
@@ -637,7 +655,9 @@ final class AppModel: ObservableObject {
                 width: width,
                 height: height,
                 fps: fps,
-                encodeSpeedMode: encodeSpeedMode
+                encodeSpeedMode: encodeSpeedMode,
+                defaultTransitionStyle: defaultTransitionToNext,
+                defaultTransitionDuration: defaultTransitionDurationToNext
             ),
             availableFlags: availableFlags,
             selectedExportFlags: Array(selectedExportFlags),
@@ -645,7 +665,9 @@ final class AppModel: ObservableObject {
             photoExcludedByName: Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, $0.isExcluded) }),
             photoFlagsByName: Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, Array($0.flags)) }),
             photoRelinkedPathByName: relinkedPathByName,
-            photoRelinkedBookmarkByName: relinkedBookmarkByName
+            photoRelinkedBookmarkByName: relinkedBookmarkByName,
+            photoTransitionToNextByName: transitionToNextByName,
+            photoTransitionDurationToNextByName: transitionDurationToNextByName
         )
     }
 
@@ -826,7 +848,9 @@ final class AppModel: ObservableObject {
         excludedByName: [String: Bool],
         flagsByName: [String: [String]],
         relinkedPathByName: [String: String],
-        relinkedBookmarkByName: [String: Data]
+        relinkedBookmarkByName: [String: Data],
+        transitionToNextByName: [String: PhotoTransitionStyle],
+        transitionDurationToNextByName: [String: Double]
     ) {
         for index in items.indices {
             let name = items[index].referenceName
@@ -835,6 +859,8 @@ final class AppModel: ObservableObject {
             items[index].relinkedPath = relinkedPathByName[name]
             items[index].relinkedBookmark = relinkedBookmarkByName[name]
             items[index].isRelinked = items[index].relinkedPath != nil || items[index].relinkedBookmark != nil
+            items[index].transitionToNext = transitionToNextByName[name]
+            items[index].transitionDurationToNext = transitionDurationToNextByName[name]
         }
 
         refreshPhotoAvailability()
@@ -867,6 +893,12 @@ final class AppModel: ObservableObject {
     private func configureDirtyTracking() {
         Publishers.CombineLatest4($secondsPerImage.dropFirst(), $width.dropFirst(), $height.dropFirst(), $fps.dropFirst())
             .sink { [weak self] _, _, _, _ in
+                self?.markProjectDirty()
+            }
+            .store(in: &cancellables)
+
+        Publishers.CombineLatest($defaultTransitionToNext.dropFirst(), $defaultTransitionDurationToNext.dropFirst())
+            .sink { [weak self] _, _ in
                 self?.markProjectDirty()
             }
             .store(in: &cancellables)
@@ -1303,6 +1335,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func effectiveTransitionToNext(for item: PhotoItem) -> PhotoTransitionStyle {
+        item.transitionToNext ?? defaultTransitionToNext
+    }
+
+    func effectiveTransitionDurationToNext(for item: PhotoItem) -> Double {
+        item.transitionDurationToNext ?? defaultTransitionDurationToNext
+    }
+
+    func setPhotoTransitionToNext(_ transition: PhotoTransitionStyle?, for id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].transitionToNext = transition
+    }
+
+    func setPhotoTransitionDurationToNext(_ duration: Double?, for id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].transitionDurationToNext = duration.map { max(0.01, min(999.99, $0)) }
+    }
+
     func setExportFlagSelection(flag: String, isSelected: Bool) {
         if isSelected {
             selectedExportFlags.insert(flag)
@@ -1482,6 +1532,8 @@ final class AppModel: ObservableObject {
             soundtracks: soundtracks,
             outputURL: outputURL,
             secondsPerImage: secondsPerImage,
+            defaultTransitionToNext: defaultTransitionToNext,
+            defaultTransitionDurationToNext: defaultTransitionDurationToNext,
             width: width,
             height: height,
             fps: fps,

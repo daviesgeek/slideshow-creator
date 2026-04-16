@@ -7,12 +7,26 @@ enum FFmpegEncoder {
         case softwareQualityH264
     }
 
+    struct BoundaryTransition {
+        let style: PhotoTransitionStyle
+        let duration: Double
+    }
+
+    struct TransitionPlan {
+        let internalTransitions: [BoundaryTransition]
+        let terminalTransition: BoundaryTransition?
+        let inputDurations: [Double]
+        let totalDuration: Double
+    }
+
     nonisolated static func run(
         ffmpegURL: URL,
         items: [PhotoItem],
         soundtracks: [SoundtrackItem],
         outputURL: URL,
         secondsPerImage: Double,
+        defaultTransitionToNext: PhotoTransitionStyle,
+        defaultTransitionDurationToNext: Double,
         width: Int,
         height: Int,
         fps: Int,
@@ -20,13 +34,21 @@ enum FFmpegEncoder {
         onProgress: @escaping @Sendable (_ progress: Double, _ statusLine: String) -> Void,
         onLogLine: @escaping @Sendable (_ line: String) -> Void
     ) async throws -> String {
+        let transitionPlan = try makeTransitionPlan(
+            items: items,
+            secondsPerImage: secondsPerImage,
+            defaultTransitionToNext: defaultTransitionToNext,
+            defaultTransitionDurationToNext: defaultTransitionDurationToNext,
+            fps: fps
+        )
+
         final class CancellationState: @unchecked Sendable {
             let lock = NSLock()
             var process: Process?
             var didRequestCancellation = false
         }
 
-        let totalDuration = max(0.001, Double(items.count) * secondsPerImage)
+        let totalDuration = max(0.001, transitionPlan.totalDuration)
         let cancellationState = CancellationState()
 
         return try await withTaskCancellationHandler {
@@ -67,11 +89,12 @@ enum FFmpegEncoder {
                     items: items,
                     soundtracks: soundtracks,
                     outputURL: outputURL,
-                    secondsPerImage: secondsPerImage,
                     width: width,
                     height: height,
                     fps: fps,
-                    videoEncoder: videoEncoder
+                    videoEncoder: videoEncoder,
+                    transitionPlan: transitionPlan,
+                    secondsPerImage: secondsPerImage
                 )
                 process.standardOutput = stdoutPipe
                 process.standardError = progressPipe
@@ -156,25 +179,103 @@ enum FFmpegEncoder {
         }
     }
 
+    nonisolated static func makeTransitionPlan(
+        items: [PhotoItem],
+        secondsPerImage: Double,
+        defaultTransitionToNext: PhotoTransitionStyle,
+        defaultTransitionDurationToNext: Double,
+        fps: Int
+    ) throws -> TransitionPlan {
+        guard secondsPerImage > 0 else {
+            throw AppError.invalidTransition("Seconds/photo must be greater than zero.")
+        }
+
+        let normalizedFPS = max(1, fps)
+        let frameQuantum = 1.0 / Double(normalizedFPS)
+        guard secondsPerImage > frameQuantum else {
+            throw AppError.invalidTransition("Seconds/photo must be greater than one frame at the selected FPS.")
+        }
+        let maxTransitionDuration = max(frameQuantum, secondsPerImage - frameQuantum)
+
+        func normalizedTransitionDuration(_ value: Double) -> Double {
+            let rounded = (value / frameQuantum).rounded() * frameQuantum
+            return max(frameQuantum, rounded)
+        }
+
+        func resolvedTransitionDuration(_ value: Double) -> Double {
+            let rounded = normalizedTransitionDuration(value)
+            if rounded >= secondsPerImage {
+                return min(1.0, maxTransitionDuration)
+            }
+            return min(rounded, maxTransitionDuration)
+        }
+
+        var internalTransitions: [BoundaryTransition] = []
+        internalTransitions.reserveCapacity(max(items.count - 1, 0))
+
+        for index in 0..<max(items.count - 1, 0) {
+            let style = items[index].transitionToNext ?? defaultTransitionToNext
+
+            if style == .none {
+                internalTransitions.append(BoundaryTransition(style: .none, duration: 0))
+                continue
+            }
+
+            let durationValue = items[index].transitionDurationToNext ?? defaultTransitionDurationToNext
+            let duration = resolvedTransitionDuration(durationValue)
+
+            internalTransitions.append(BoundaryTransition(style: style, duration: duration))
+        }
+
+        let terminalTransition: BoundaryTransition?
+        if let lastItem = items.last {
+            let style = lastItem.transitionToNext ?? defaultTransitionToNext
+            if style == .none {
+                terminalTransition = nil
+            } else {
+                let durationValue = lastItem.transitionDurationToNext ?? defaultTransitionDurationToNext
+                let duration = resolvedTransitionDuration(durationValue)
+
+                terminalTransition = BoundaryTransition(style: style, duration: duration)
+            }
+        } else {
+            terminalTransition = nil
+        }
+
+        var inputDurations = Array(repeating: secondsPerImage, count: items.count)
+        for index in internalTransitions.indices {
+            guard internalTransitions[index].style != .none, internalTransitions[index].duration > 0 else { continue }
+            inputDurations[index] += internalTransitions[index].duration
+        }
+
+        let totalDuration = Double(items.count) * secondsPerImage
+        return TransitionPlan(
+            internalTransitions: internalTransitions,
+            terminalTransition: terminalTransition,
+            inputDurations: inputDurations,
+            totalDuration: totalDuration
+        )
+    }
+
     nonisolated static func makeArguments(
         items: [PhotoItem],
         soundtracks: [SoundtrackItem],
         outputURL: URL,
-        secondsPerImage: Double,
         width: Int,
         height: Int,
         fps: Int,
-        videoEncoder: VideoEncoder
+        videoEncoder: VideoEncoder,
+        transitionPlan: TransitionPlan,
+        secondsPerImage: Double
     ) -> [String] {
-        let slideshowDuration = Double(items.count) * secondsPerImage
         let targetVideoBitrate = recommendedVideoBitrate(width: width, height: height, fps: fps)
 
         var args: [String] = ["-y", "-hide_banner", "-progress", "pipe:2", "-nostats", "-sws_flags", "fast_bilinear"]
 
-        for item in items {
+        for (index, item) in items.enumerated() {
             args += [
                 "-loop", "1",
-                "-t", String(secondsPerImage),
+                "-t", ffmpegTime(transitionPlan.inputDurations[index]),
                 "-i", item.url.path
             ]
         }
@@ -191,13 +292,80 @@ enum FFmpegEncoder {
                 "scale=\(width):\(height):force_original_aspect_ratio=decrease," +
                 "pad=\(width):\(height):(ow-iw)/2:(oh-ih)/2," +
                 "setsar=1," +
-                "format=yuv420p" +
-                "[v\(index)]"
+                "fps=\(fps)," +
+                "format=yuv420p," +
+                "settb=AVTB," +
+                "setpts=PTS-STARTPTS" +
+                "[p\(index)]"
             filterParts.append(part)
         }
 
-        let concatInputs = items.indices.map { "[v\($0)]" }.joined()
-        filterParts.append("\(concatInputs)concat=n=\(items.count):v=1:a=0[v]")
+        let groups = makeHardCutGroups(itemCount: items.count, transitions: transitionPlan.internalTransitions)
+        var groupOutputLabels: [String] = []
+
+        for (groupIndex, range) in groups.enumerated() {
+            if range.lowerBound == range.upperBound {
+                groupOutputLabels.append("p\(range.lowerBound)")
+                continue
+            }
+
+            var currentLabel = "p\(range.lowerBound)"
+            var localTransitionIndex = 0
+
+            for boundaryIndex in range.lowerBound..<range.upperBound {
+                let transition = transitionPlan.internalTransitions[boundaryIndex]
+                guard transition.style != .none, transition.duration > 0 else { continue }
+
+                localTransitionIndex += 1
+                let nextLabel = "p\(boundaryIndex + 1)"
+                let outputLabel = "g\(groupIndex)_x\(boundaryIndex)"
+                let offset = Double(localTransitionIndex) * secondsPerImage
+
+                filterParts.append(
+                    "[\(currentLabel)][\(nextLabel)]" +
+                    "xfade=transition=\(transition.style.rawValue):duration=\(ffmpegTime(transition.duration)):offset=\(ffmpegTime(offset))" +
+                    "[\(outputLabel)]"
+                )
+
+                currentLabel = outputLabel
+            }
+
+            groupOutputLabels.append(currentLabel)
+        }
+
+        let contentLabel: String
+        switch groupOutputLabels.count {
+        case 0:
+            contentLabel = "v"
+            filterParts.append("color=c=black:s=\(width)x\(height):r=\(fps):d=0.001,format=yuv420p[v]")
+        case 1:
+            contentLabel = groupOutputLabels[0]
+        default:
+            let concatInputs = groupOutputLabels.map { "[\($0)]" }.joined()
+            contentLabel = "v_content"
+            filterParts.append("\(concatInputs)concat=n=\(groupOutputLabels.count):v=1:a=0[\(contentLabel)]")
+        }
+
+        let finalVideoLabel: String
+        if let terminalTransition = transitionPlan.terminalTransition {
+            let blackLabel = "v_black"
+            let terminalLabel = "v"
+            let offset = max(0, transitionPlan.totalDuration - terminalTransition.duration)
+
+            filterParts.append(
+                "color=c=black:s=\(width)x\(height):r=\(fps):d=\(ffmpegTime(terminalTransition.duration))," +
+                "format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS" +
+                "[\(blackLabel)]"
+            )
+            filterParts.append(
+                "[\(contentLabel)][\(blackLabel)]" +
+                "xfade=transition=\(terminalTransition.style.rawValue):duration=\(ffmpegTime(terminalTransition.duration)):offset=\(ffmpegTime(offset))" +
+                "[\(terminalLabel)]"
+            )
+            finalVideoLabel = terminalLabel
+        } else {
+            finalVideoLabel = contentLabel
+        }
 
         if !soundtracks.isEmpty {
             let audioStartIndex = items.count
@@ -208,15 +376,12 @@ enum FFmpegEncoder {
             }
 
             let audioConcatInputs = soundtracks.indices.map { "[a\($0)]" }.joined()
-            let fadeDuration = max(0.1, min(1.0, slideshowDuration))
-            let fadeStart = max(0.0, slideshowDuration - fadeDuration)
-
-            filterParts.append("\(audioConcatInputs)concat=n=\(soundtracks.count):v=0:a=1,atrim=0:\(slideshowDuration),afade=t=out:st=\(fadeStart):d=\(fadeDuration)[a]")
+            filterParts.append("\(audioConcatInputs)concat=n=\(soundtracks.count):v=0:a=1,atrim=0:\(ffmpegTime(transitionPlan.totalDuration))[a]")
         }
 
         args += [
             "-filter_complex", filterParts.joined(separator: ";"),
-            "-map", "[v]",
+            "-map", "[\(finalVideoLabel)]",
             "-r", "\(fps)"
         ]
 
@@ -260,6 +425,32 @@ enum FFmpegEncoder {
         args += [outputURL.path]
 
         return args
+    }
+
+    nonisolated private static func makeHardCutGroups(itemCount: Int, transitions: [BoundaryTransition]) -> [ClosedRange<Int>] {
+        guard itemCount > 0 else { return [] }
+
+        var ranges: [ClosedRange<Int>] = []
+        var start = 0
+
+        for boundaryIndex in 0..<max(itemCount - 1, 0) {
+            let transition = transitions[boundaryIndex]
+            if transition.style == .none || transition.duration <= 0 {
+                ranges.append(start...boundaryIndex)
+                start = boundaryIndex + 1
+            }
+        }
+
+        ranges.append(start...(itemCount - 1))
+        return ranges
+    }
+
+    nonisolated private static func ffmpegTime(_ value: Double) -> String {
+        let precision = String(format: "%.6f", value)
+        let trimmed = precision
+            .replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\.$"#, with: "", options: .regularExpression)
+        return trimmed.isEmpty ? "0" : trimmed
     }
 
     nonisolated private static func parseTimecode(_ value: String) -> Double {

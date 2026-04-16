@@ -6,6 +6,7 @@ enum AppError: LocalizedError {
     case encodingCancelled
     case noImages
     case noExportableImages
+    case invalidTransition(String)
     case projectSaveFailed(String)
     case projectLoadFailed(String)
 
@@ -21,6 +22,8 @@ enum AppError: LocalizedError {
             return "No supported images found in the selected folder."
         case .noExportableImages:
             return "No exportable photos match your exclude/flag filters."
+        case .invalidTransition(let message):
+            return "Invalid transition settings: \(message)"
         case .projectSaveFailed(let message):
             return "Could not save project: \(message)"
         case .projectLoadFailed(let message):

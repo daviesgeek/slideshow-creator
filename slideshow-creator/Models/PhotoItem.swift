@@ -10,6 +10,8 @@ struct PhotoItem: Identifiable, Equatable {
     var isRelinked = false
     var relinkedPath: String?
     var relinkedBookmark: Data?
+    var transitionToNext: PhotoTransitionStyle?
+    var transitionDurationToNext: Double?
 
     init(
         id: UUID = UUID(),
@@ -20,7 +22,9 @@ struct PhotoItem: Identifiable, Equatable {
         isMissing: Bool = false,
         isRelinked: Bool = false,
         relinkedPath: String? = nil,
-        relinkedBookmark: Data? = nil
+        relinkedBookmark: Data? = nil,
+        transitionToNext: PhotoTransitionStyle? = nil,
+        transitionDurationToNext: Double? = nil
     ) {
         self.id = id
         self.referenceName = referenceName ?? url.lastPathComponent
@@ -31,6 +35,8 @@ struct PhotoItem: Identifiable, Equatable {
         self.isRelinked = isRelinked
         self.relinkedPath = relinkedPath
         self.relinkedBookmark = relinkedBookmark
+        self.transitionToNext = transitionToNext
+        self.transitionDurationToNext = transitionDurationToNext
     }
 
     var name: String { url.lastPathComponent }

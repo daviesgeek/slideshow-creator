@@ -185,6 +185,8 @@ struct PhotosPaneView: View {
                     shortcutFlags: model.shortcutFlags,
                     isSelected: visibleSelectedPhotoIDs.contains(item.id),
                     isMissing: item.isMissing,
+                    effectiveTransitionToNext: model.effectiveTransitionToNext(for: item),
+                    effectiveTransitionDurationToNext: model.effectiveTransitionDurationToNext(for: item),
                     dragProvider: {
                         beginPhotoDrag(for: item.id)
                         return NSItemProvider(object: item.id.uuidString as NSString)
@@ -201,6 +203,12 @@ struct PhotosPaneView: View {
                     },
                     onFlagToggle: { flag, isEnabled in
                         model.setFlag(flag, enabled: isEnabled, for: item.id)
+                    },
+                    onTransitionToNextChange: { transition in
+                        model.setPhotoTransitionToNext(transition, for: item.id)
+                    },
+                    onTransitionDurationToNextChange: { duration in
+                        model.setPhotoTransitionDurationToNext(duration, for: item.id)
                     }
                 )
                 .tag(item.id)

@@ -25,6 +25,8 @@ struct ProjectSettings: Codable {
     let height: Int
     let fps: Int
     let encodeSpeedMode: EncodeSpeedMode?
+    let defaultTransitionStyle: PhotoTransitionStyle?
+    let defaultTransitionDuration: Double?
     // Legacy field kept for backwards compatibility with older project files.
     // FFmpeg path is now a global app setting (persisted in UserDefaults),
     // so new project files do not need to store it.
@@ -36,7 +38,9 @@ struct ProjectSettings: Codable {
         height: Int,
         fps: Int,
         encodeSpeedMode: EncodeSpeedMode = .fastestHardware,
-        ffmpegPath: String? = nil
+        ffmpegPath: String? = nil,
+        defaultTransitionStyle: PhotoTransitionStyle? = nil,
+        defaultTransitionDuration: Double? = nil
     ) {
         self.secondsPerImage = secondsPerImage
         self.width = width
@@ -44,5 +48,7 @@ struct ProjectSettings: Codable {
         self.fps = fps
         self.encodeSpeedMode = encodeSpeedMode
         self.ffmpegPath = ffmpegPath
+        self.defaultTransitionStyle = defaultTransitionStyle
+        self.defaultTransitionDuration = defaultTransitionDuration
     }
 }

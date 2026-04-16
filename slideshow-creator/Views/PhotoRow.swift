@@ -6,11 +6,15 @@ struct PhotoRow: View {
     let shortcutFlags: [String]
     let isSelected: Bool
     let isMissing: Bool
+    let effectiveTransitionToNext: PhotoTransitionStyle
+    let effectiveTransitionDurationToNext: Double
     let dragProvider: (() -> NSItemProvider)?
     let onActivate: () -> Void
     let onRelink: () -> Void
     let onExcludeToggle: (Bool) -> Void
     let onFlagToggle: (String, Bool) -> Void
+    let onTransitionToNextChange: (PhotoTransitionStyle?) -> Void
+    let onTransitionDurationToNextChange: (Double?) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -78,6 +82,27 @@ struct PhotoRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+
+                HStack(spacing: 8) {
+                    Toggle("Override default", isOn: transitionOverrideBinding)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+
+                    Picker("Transition", selection: transitionToNextBinding) {
+                        ForEach(PhotoTransitionStyle.allCases) { transition in
+                            Text(transition.label).tag(transition)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 130)
+                    .disabled(!transitionOverrideBinding.wrappedValue)
+
+                    SecondsPerPhotoField(
+                        label: "Transition duration:",
+                        value: transitionDurationToNextBinding
+                    )
+                    .disabled(!transitionOverrideBinding.wrappedValue)
+                }
             }
         }
         .opacity(item.isExcluded ? 0.45 : 1)
@@ -87,6 +112,37 @@ struct PhotoRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
         .modifier(PhotoRowActivationInteractions(isSelected: isSelected, onActivate: onActivate))
+    }
+}
+
+extension PhotoRow {
+    private var transitionOverrideBinding: Binding<Bool> {
+        Binding(
+            get: { item.transitionToNext != nil || item.transitionDurationToNext != nil },
+            set: { isEnabled in
+                if isEnabled {
+                    onTransitionToNextChange(item.transitionToNext ?? effectiveTransitionToNext)
+                    onTransitionDurationToNextChange(item.transitionDurationToNext ?? effectiveTransitionDurationToNext)
+                } else {
+                    onTransitionToNextChange(nil)
+                    onTransitionDurationToNextChange(nil)
+                }
+            }
+        )
+    }
+
+    private var transitionToNextBinding: Binding<PhotoTransitionStyle> {
+        Binding(
+            get: { item.transitionToNext ?? effectiveTransitionToNext },
+            set: { onTransitionToNextChange($0) }
+        )
+    }
+
+    private var transitionDurationToNextBinding: Binding<Double> {
+        Binding(
+            get: { item.transitionDurationToNext ?? effectiveTransitionDurationToNext },
+            set: { onTransitionDurationToNextChange($0) }
+        )
     }
 }
 

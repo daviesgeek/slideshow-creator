@@ -19,6 +19,19 @@ struct EncodingSettingsView: View {
                 value: $model.secondsPerImage
             )
 
+            Picker("Default transition", selection: $model.defaultTransitionToNext) {
+                ForEach(PhotoTransitionStyle.allCases) { transition in
+                    Text(transition.label).tag(transition)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 130)
+
+            SecondsPerPhotoField(
+                label: "Default trans sec:",
+                value: $model.defaultTransitionDurationToNext
+            )
+
             Picker("Mode", selection: $model.encodeSpeedMode) {
                 ForEach(EncodeSpeedMode.allCases) { mode in
                     Text(mode.label).tag(mode)
