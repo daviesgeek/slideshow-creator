@@ -77,13 +77,19 @@ struct ContentView: View {
                     shortcutFlags: model.shortcutFlags,
                     currentIndex: previewIndexBinding,
                     onToggleExclude: { id in
-                        let previousItems = model.filteredPhotoItems
-                        let previousIndex = currentPreviewIndex(in: previousItems)
-                        model.toggleExclude(for: id)
-                        updatePreviewAfterFilteringChange(previousItems: previousItems, previousIndex: previousIndex)
+                        togglePreviewItemExclusion(id)
                     },
                     onToggleFlag: { number, id in
                         model.toggleShortcutFlag(number, for: id)
+                    },
+                    onSetExcluded: { isExcluded, id in
+                        setPreviewItemExclusion(isExcluded, id: id)
+                    },
+                    onSetFlagEnabled: { flag, enabled, id in
+                        model.setFlag(flag, enabled: enabled, for: id)
+                    },
+                    onMove: { destination, id in
+                        movePreviewItem(destination, id: id)
                     },
                     onClose: {
                         if let previewedPhotoID {
@@ -145,6 +151,33 @@ struct ContentView: View {
 
         let fallbackIndex = min(max(0, previousIndex), newItems.count - 1)
         previewedPhotoID = newItems[fallbackIndex].id
+    }
+
+    private func togglePreviewItemExclusion(_ id: PhotoItem.ID) {
+        let previousItems = model.filteredPhotoItems
+        let previousIndex = currentPreviewIndex(in: previousItems)
+        model.toggleExclude(for: id)
+        updatePreviewAfterFilteringChange(previousItems: previousItems, previousIndex: previousIndex)
+    }
+
+    private func setPreviewItemExclusion(_ isExcluded: Bool, id: PhotoItem.ID) {
+        let previousItems = model.filteredPhotoItems
+        let previousIndex = currentPreviewIndex(in: previousItems)
+        model.setPhotoExcluded(isExcluded, for: id)
+        updatePreviewAfterFilteringChange(previousItems: previousItems, previousIndex: previousIndex)
+    }
+
+    private func movePreviewItem(_ destination: PhotoContextMenuContent.MoveDestination, id: PhotoItem.ID) {
+        switch destination {
+        case .top:
+            model.moveSelectedPhotosToTop(Set([id]))
+        case .up:
+            model.moveSelectedPhotosUp(Set([id]))
+        case .down:
+            model.moveSelectedPhotosDown(Set([id]))
+        case .bottom:
+            model.moveSelectedPhotosToBottom(Set([id]))
+        }
     }
 
     private var projectDisplayText: String {

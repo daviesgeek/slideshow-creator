@@ -204,6 +204,31 @@ struct PhotosPaneView: View {
                     }
                 )
                 .tag(item.id)
+                .onSecondaryClick {
+                    prepareContextMenuSelection(for: item.id)
+                }
+                .contextMenu {
+                    PhotoContextMenuContent(
+                        targetItems: contextMenuTargetItems(for: item.id),
+                        primaryItem: item,
+                        shortcutFlags: model.shortcutFlags,
+                        onOpenFullscreen: {
+                            model.selectPhoto(item.id)
+                            onThumbnailTap(item)
+                        },
+                        onRevealInFinder: revealInFinder,
+                        onOpenInDefaultApp: openInDefaultApp,
+                        onSetExcluded: { isExcluded, targetItems in
+                            model.setPhotosExcluded(isExcluded, for: Set(targetItems.map(\.id)))
+                        },
+                        onSetFlagEnabled: { flag, enabled, targetItems in
+                            model.setFlag(flag, enabled: enabled, for: Set(targetItems.map(\.id)))
+                        },
+                        onMove: { destination, targetItems in
+                            movePhotos(destination, ids: Set(targetItems.map(\.id)))
+                        }
+                    )
+                }
             }
             .onInsert(of: [UTType.text.identifier], perform: handleListInsert)
         }
@@ -256,6 +281,31 @@ struct PhotosPaneView: View {
                             }
                         )
                         .id(item.id)
+                        .onSecondaryClick {
+                            prepareContextMenuSelection(for: item.id)
+                        }
+                        .contextMenu {
+                            PhotoContextMenuContent(
+                                targetItems: contextMenuTargetItems(for: item.id),
+                                primaryItem: item,
+                                shortcutFlags: model.shortcutFlags,
+                                onOpenFullscreen: {
+                                    model.selectPhoto(item.id)
+                                    onThumbnailTap(item)
+                                },
+                                onRevealInFinder: revealInFinder,
+                                onOpenInDefaultApp: openInDefaultApp,
+                                onSetExcluded: { isExcluded, targetItems in
+                                    model.setPhotosExcluded(isExcluded, for: Set(targetItems.map(\.id)))
+                                },
+                                onSetFlagEnabled: { flag, enabled, targetItems in
+                                    model.setFlag(flag, enabled: enabled, for: Set(targetItems.map(\.id)))
+                                },
+                                onMove: { destination, targetItems in
+                                    movePhotos(destination, ids: Set(targetItems.map(\.id)))
+                                }
+                            )
+                        }
                         .onDrop(
                             of: [UTType.text],
                             delegate: GridPhotoDropDelegate(
@@ -465,6 +515,50 @@ struct PhotosPaneView: View {
             withAnimation(.easeInOut(duration: 0.12), action)
         } else {
             action()
+        }
+    }
+
+    private func prepareContextMenuSelection(for clickedID: PhotoItem.ID) {
+        guard !visibleSelectedPhotoIDs.contains(clickedID) else { return }
+        model.selectPhoto(clickedID)
+    }
+
+    private func contextMenuTargetIDs(for clickedID: PhotoItem.ID) -> Set<PhotoItem.ID> {
+        let visibleSelection = visibleSelectedPhotoIDs
+        if visibleSelection.contains(clickedID), !visibleSelection.isEmpty {
+            return visibleSelection
+        }
+
+        return [clickedID]
+    }
+
+    private func contextMenuTargetItems(for clickedID: PhotoItem.ID) -> [PhotoItem] {
+        let targetIDs = contextMenuTargetIDs(for: clickedID)
+        return filteredItems.filter { targetIDs.contains($0.id) }
+    }
+
+    private func revealInFinder(_ items: [PhotoItem]) {
+        let urls = items.map(\.url)
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    private func openInDefaultApp(_ items: [PhotoItem]) {
+        for item in items {
+            NSWorkspace.shared.open(item.url)
+        }
+    }
+
+    private func movePhotos(_ destination: PhotoContextMenuContent.MoveDestination, ids: Set<PhotoItem.ID>) {
+        switch destination {
+        case .top:
+            model.moveSelectedPhotosToTop(ids)
+        case .up:
+            model.moveSelectedPhotosUp(ids)
+        case .down:
+            model.moveSelectedPhotosDown(ids)
+        case .bottom:
+            model.moveSelectedPhotosToBottom(ids)
         }
     }
 

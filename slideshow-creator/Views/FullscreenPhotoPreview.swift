@@ -7,6 +7,9 @@ struct FullscreenPhotoPreview: View {
     @Binding var currentIndex: Int
     let onToggleExclude: (PhotoItem.ID) -> Void
     let onToggleFlag: (Int, PhotoItem.ID) -> Void
+    let onSetExcluded: (Bool, PhotoItem.ID) -> Void
+    let onSetFlagEnabled: (String, Bool, PhotoItem.ID) -> Void
+    let onMove: (PhotoContextMenuContent.MoveDestination, PhotoItem.ID) -> Void
     let onClose: () -> Void
 
     @FocusState private var isFocused: Bool
@@ -44,16 +47,7 @@ struct FullscreenPhotoPreview: View {
             Color.black.ignoresSafeArea()
 
             if let item = currentItem {
-                if let image = NSImage(contentsOf: item.url) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(40)
-                } else {
-                    Text("Unable to preview image")
-                        .foregroundStyle(.white)
-                }
+                previewContent(for: item)
 
                 HStack {
                     previewArrowButton(systemName: "chevron.left", action: goPrevious)
@@ -164,6 +158,50 @@ struct FullscreenPhotoPreview: View {
                 .background(.regularMaterial, in: Circle())
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func previewContent(for item: PhotoItem) -> some View {
+        Group {
+            if let image = NSImage(contentsOf: item.url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(40)
+            } else {
+                Text("Unable to preview image")
+                    .foregroundStyle(.white)
+            }
+        }
+        .contextMenu {
+            PhotoContextMenuContent(
+                targetItems: [item],
+                primaryItem: item,
+                shortcutFlags: shortcutFlags,
+                onOpenFullscreen: nil,
+                onRevealInFinder: { items in
+                    NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url))
+                },
+                onOpenInDefaultApp: { items in
+                    for target in items {
+                        NSWorkspace.shared.open(target.url)
+                    }
+                },
+                onSetExcluded: { isExcluded, items in
+                    guard let first = items.first else { return }
+                    onSetExcluded(isExcluded, first.id)
+                },
+                onSetFlagEnabled: { flag, enabled, items in
+                    guard let first = items.first else { return }
+                    onSetFlagEnabled(flag, enabled, first.id)
+                },
+                onMove: { destination, items in
+                    guard let first = items.first else { return }
+                    onMove(destination, first.id)
+                }
+            )
+        }
     }
 }
 

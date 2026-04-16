@@ -1290,6 +1290,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func setFlag(_ flag: String, enabled: Bool, for ids: Set<PhotoItem.ID>) {
+        let normalized = normalizedPhotoSelection(ids)
+        guard !normalized.isEmpty else { return }
+
+        for index in items.indices where normalized.contains(items[index].id) {
+            if enabled {
+                items[index].flags.insert(flag)
+            } else {
+                items[index].flags.remove(flag)
+            }
+        }
+    }
+
     func setExportFlagSelection(flag: String, isSelected: Bool) {
         if isSelected {
             selectedExportFlags.insert(flag)
