@@ -12,7 +12,7 @@ struct PhotoGridCellView: View {
     let thumbnailHeight: CGFloat
     let thumbnailMaxPixelSize: CGFloat
     let onSelect: (NSEvent.ModifierFlags) -> Void
-    let onThumbnailTap: () -> Void
+    let onActivate: () -> Void
     let onFlagToggle: (String, Bool) -> Void
     let dragProvider: () -> NSItemProvider
 
@@ -20,7 +20,7 @@ struct PhotoGridCellView: View {
 
     var body: some View {
         cellContent
-            .modifier(PhotoGridSelectionInteractions(onSelect: onSelect, onThumbnailTap: onThumbnailTap))
+            .modifier(PhotoGridSelectionInteractions(isSelected: isSelected, onSelect: onSelect, onActivate: onActivate))
             .background(cellBackground)
             .overlay(cellBorder)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -134,8 +134,9 @@ struct PhotoGridCellView: View {
 }
 
 private struct PhotoGridSelectionInteractions: ViewModifier {
+    let isSelected: Bool
     let onSelect: (NSEvent.ModifierFlags) -> Void
-    let onThumbnailTap: () -> Void
+    let onActivate: () -> Void
 
     func body(content: Content) -> some View {
         content
@@ -144,10 +145,23 @@ private struct PhotoGridSelectionInteractions: ViewModifier {
                 let clickCount = NSApp.currentEvent?.clickCount ?? 1
                 let modifiers = (NSApp.currentEvent?.modifierFlags ?? [])
                     .intersection([.shift, .command])
-                onSelect(modifiers)
-
                 if clickCount == 2 {
-                    onThumbnailTap()
+                    onSelect(modifiers)
+                    if modifiers.isEmpty {
+                        onActivate()
+                    }
+                    return
+                }
+
+                if !modifiers.isEmpty {
+                    onSelect(modifiers)
+                    return
+                }
+
+                if isSelected {
+                    onActivate()
+                } else {
+                    onSelect(modifiers)
                 }
             }
     }

@@ -1,11 +1,12 @@
 import SwiftUI
+import AppKit
 
 struct PhotoRow: View {
     let item: PhotoItem
     let shortcutFlags: [String]
     let isSelected: Bool
     let dragProvider: (() -> NSItemProvider)?
-    let onThumbnailTap: () -> Void
+    let onActivate: () -> Void
     let onExcludeToggle: (Bool) -> Void
     let onFlagToggle: (String, Bool) -> Void
 
@@ -22,12 +23,9 @@ struct PhotoRow: View {
                     .help("Drag to reorder")
             }
 
-            Button(action: onThumbnailTap) {
-                ThumbnailView(url: item.url, maxPixelSize: 72)
-                    .frame(width: 72, height: 72)
-            }
-            .buttonStyle(.plain)
-            .help("Open fullscreen preview")
+            ThumbnailView(url: item.url, maxPixelSize: 72)
+                .frame(width: 72, height: 72)
+                .help("Open fullscreen preview")
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
@@ -70,5 +68,26 @@ struct PhotoRow: View {
         .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
+        .modifier(PhotoRowActivationInteractions(isSelected: isSelected, onActivate: onActivate))
+    }
+}
+
+private struct PhotoRowActivationInteractions: ViewModifier {
+    let isSelected: Bool
+    let onActivate: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onTapGesture(count: 1) {
+                let clickCount = NSApp.currentEvent?.clickCount ?? 1
+                let modifiers = (NSApp.currentEvent?.modifierFlags ?? [])
+                    .intersection([.shift, .command])
+
+                guard modifiers.isEmpty else { return }
+
+                if clickCount == 2 || isSelected {
+                    onActivate()
+                }
+            }
     }
 }

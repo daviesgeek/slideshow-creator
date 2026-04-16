@@ -75,6 +75,8 @@ struct ThumbnailView: View {
 
     @Environment(\.displayScale) private var displayScale
     @State private var image: NSImage?
+    @State private var didFailLoading = false
+    @State private var activeRequestKey = ""
 
     static func cachedThumbnail(for url: URL, maxPixelSize: CGFloat, scale: CGFloat) -> NSImage? {
         let key = ThumbnailCacheKey.make(url: url, maxPixelSize: maxPixelSize, scale: scale)
@@ -88,6 +90,14 @@ struct ThumbnailView: View {
                     .resizable()
                     .interpolation(.medium)
                     .scaledToFit()
+            } else if didFailLoading {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.quaternary)
+                    .overlay {
+                        Image(systemName: "photo")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary)
@@ -99,11 +109,20 @@ struct ThumbnailView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .task(id: cacheRequestKey) {
-            image = await ThumbnailPipeline.shared.thumbnail(
+            let requestKey = cacheRequestKey
+            activeRequestKey = requestKey
+            image = nil
+            didFailLoading = false
+
+            let loadedImage = await ThumbnailPipeline.shared.thumbnail(
                 for: url,
                 maxPixelSize: maxPixelSize,
                 scale: displayScale
             )
+
+            guard !Task.isCancelled, activeRequestKey == requestKey else { return }
+            image = loadedImage
+            didFailLoading = loadedImage == nil
         }
     }
 

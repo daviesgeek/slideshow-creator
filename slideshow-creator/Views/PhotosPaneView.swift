@@ -84,12 +84,27 @@ struct PhotosPaneView: View {
             keyboardShortcuts
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear(perform: syncSelectionToFilter)
-        .onChange(of: model.photosExclusionFilter) { _, _ in
+        .onAppear {
             syncSelectionToFilter()
         }
-        .onChange(of: model.items) { _, _ in
-            syncSelectionToFilter()
+        .onChange(of: model.photosExclusionFilter) { previousFilter, _ in
+            let previousVisibleOrder = model.filteredPhotoItems(for: previousFilter).map(\.id)
+            syncSelectionToFilter(previousVisibleOrder: previousVisibleOrder)
+        }
+        .onChange(of: model.items) { previousItems, _ in
+            let previousVisibleOrder = model
+                .filteredPhotoItems(for: model.photosExclusionFilter, in: previousItems)
+                .map(\.id)
+            syncSelectionToFilter(previousVisibleOrder: previousVisibleOrder)
+        }
+        .onChange(of: draggedPhotoIDs) { _, newValue in
+            if newValue.isEmpty {
+                clearGridDropTargets()
+            }
+        }
+        .onDisappear {
+            draggedPhotoIDs = []
+            clearGridDropTargets()
         }
     }
 
@@ -155,7 +170,7 @@ struct PhotosPaneView: View {
                         beginPhotoDrag(for: item.id)
                         return NSItemProvider(object: item.id.uuidString as NSString)
                     },
-                    onThumbnailTap: {
+                    onActivate: {
                         model.selectPhoto(item.id)
                         onThumbnailTap(item)
                     },
@@ -202,7 +217,7 @@ struct PhotosPaneView: View {
                             onSelect: { modifiers in
                                 handleGridSelection(for: item.id, modifiers: modifiers)
                             },
-                            onThumbnailTap: {
+                            onActivate: {
                                 model.selectPhoto(item.id)
                                 onThumbnailTap(item)
                             },
@@ -308,6 +323,7 @@ struct PhotosPaneView: View {
     private var keyboardShortcuts: some View {
         HStack(spacing: 0) {
             Button("Toggle Exclude") {
+                guard canHandlePhotoKeyboardShortcut else { return }
                 model.toggleExcludeForSelectedPhoto()
             }
             .keyboardShortcut("x", modifiers: [])
@@ -316,6 +332,7 @@ struct PhotosPaneView: View {
 
             ForEach(1...9, id: \.self) { number in
                 Button("Toggle Flag \(number)") {
+                    guard canHandlePhotoKeyboardShortcut else { return }
                     model.toggleShortcutFlagForSelectedPhoto(number)
                 }
                 .keyboardShortcut(keyEquivalent(for: number), modifiers: [])
@@ -325,6 +342,7 @@ struct PhotosPaneView: View {
 
             if model.photosViewMode == .grid && isKeyboardNavigationEnabled {
                 Button("Grid Left") {
+                    guard canHandlePhotoKeyboardShortcut else { return }
                     moveGridSelection(horizontalDelta: -1)
                 }
                 .keyboardShortcut(.leftArrow, modifiers: [])
@@ -332,6 +350,7 @@ struct PhotosPaneView: View {
                 .frame(width: 0, height: 0)
 
                 Button("Grid Right") {
+                    guard canHandlePhotoKeyboardShortcut else { return }
                     moveGridSelection(horizontalDelta: 1)
                 }
                 .keyboardShortcut(.rightArrow, modifiers: [])
@@ -339,6 +358,7 @@ struct PhotosPaneView: View {
                 .frame(width: 0, height: 0)
 
                 Button("Grid Up") {
+                    guard canHandlePhotoKeyboardShortcut else { return }
                     moveGridSelection(verticalDelta: -1)
                 }
                 .keyboardShortcut(.upArrow, modifiers: [])
@@ -346,6 +366,7 @@ struct PhotosPaneView: View {
                 .frame(width: 0, height: 0)
 
                 Button("Grid Down") {
+                    guard canHandlePhotoKeyboardShortcut else { return }
                     moveGridSelection(verticalDelta: 1)
                 }
                 .keyboardShortcut(.downArrow, modifiers: [])
@@ -403,6 +424,8 @@ struct PhotosPaneView: View {
             model.selectPhoto(id)
             draggedPhotoIDs = [id]
         }
+
+        clearGridDropTargets()
     }
 
     private func scrollGridSelectionIntoView(with proxy: ScrollViewProxy, animated: Bool = true) {
@@ -419,19 +442,96 @@ struct PhotosPaneView: View {
         }
     }
 
-    private func syncSelectionToFilter() {
-        let visibleIDs = Set(filteredItems.map(\.id))
+    private var canHandlePhotoKeyboardShortcut: Bool {
+        guard isKeyboardNavigationEnabled else { return false }
+
+        guard let firstResponder = NSApp.keyWindow?.firstResponder else {
+            return true
+        }
+
+        if firstResponder is NSTextView {
+            return false
+        }
+
+        if let control = firstResponder as? NSControl, control.currentEditor() != nil {
+            return false
+        }
+
+        return true
+    }
+
+    private func syncSelectionToFilter(previousVisibleOrder: [PhotoItem.ID]? = nil) {
+        let visibleOrder = filteredItems.map(\.id)
+        let visibleIDs = Set(visibleOrder)
         let updatedSelection = model.selectedPhotoIDs.intersection(visibleIDs)
 
-        if updatedSelection != model.selectedPhotoIDs {
-            if updatedSelection.isEmpty {
-                model.selectPhoto(filteredItems.first?.id)
-            } else {
+        let primaryID = model.selectedPhotoID
+
+        if !updatedSelection.isEmpty {
+            if updatedSelection != model.selectedPhotoIDs {
                 model.selectPhotos(updatedSelection)
             }
-        } else if updatedSelection.isEmpty, model.selectedPhotoID == nil {
-            model.selectPhoto(filteredItems.first?.id)
+
+            if let primaryID, updatedSelection.contains(primaryID) {
+                model.setPrimarySelectedPhoto(primaryID)
+                return
+            }
+
+            if let promotedPrimary = visibleOrder.first(where: { updatedSelection.contains($0) }) {
+                model.setPrimarySelectedPhoto(promotedPrimary)
+            }
+            return
         }
+
+        let fallbackID = fallbackSelectionID(
+            previousVisibleOrder: previousVisibleOrder,
+            visibleOrder: visibleOrder,
+            currentPrimaryID: primaryID
+        )
+
+        model.selectPhoto(fallbackID)
+    }
+
+    private func fallbackSelectionID(
+        previousVisibleOrder: [PhotoItem.ID]?,
+        visibleOrder: [PhotoItem.ID],
+        currentPrimaryID: PhotoItem.ID?
+    ) -> PhotoItem.ID? {
+        guard !visibleOrder.isEmpty else { return nil }
+
+        guard let currentPrimaryID else {
+            return visibleOrder.first
+        }
+
+        let visibleSet = Set(visibleOrder)
+        if visibleSet.contains(currentPrimaryID) {
+            return currentPrimaryID
+        }
+
+        guard let previousVisibleOrder,
+              let previousIndex = previousVisibleOrder.firstIndex(of: currentPrimaryID) else {
+            return visibleOrder.first
+        }
+
+        if previousIndex + 1 < previousVisibleOrder.count {
+            for id in previousVisibleOrder[(previousIndex + 1)...] where visibleSet.contains(id) {
+                return id
+            }
+        }
+
+        if previousIndex > 0 {
+            for id in previousVisibleOrder[..<previousIndex].reversed() where visibleSet.contains(id) {
+                return id
+            }
+        }
+
+        return visibleOrder.first
+    }
+
+    private func clearGridDropTargets() {
+        gridDropTargetID = nil
+        gridDropTargetEdge = nil
+        isGridDroppingAtEnd = false
     }
 }
 
@@ -467,17 +567,48 @@ private struct GridPhotoDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        guard !draggedItemIDs.isEmpty else { return }
-        guard !draggedItemIDs.contains(targetItemID) else { return }
+        guard !draggedItemIDs.isEmpty else {
+            if dropTargetID == targetItemID {
+                dropTargetID = nil
+                dropTargetEdge = nil
+            }
+            return
+        }
+        guard !draggedItemIDs.contains(targetItemID) else {
+            if dropTargetID == targetItemID {
+                dropTargetID = nil
+                dropTargetEdge = nil
+            }
+            return
+        }
 
         isDroppingAtEnd = false
         dropTargetID = targetItemID
         dropTargetEdge = edge(for: info)
     }
 
+    func dropExited(info _: DropInfo) {
+        if dropTargetID == targetItemID {
+            dropTargetID = nil
+            dropTargetEdge = nil
+        }
+    }
+
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard !draggedItemIDs.isEmpty else { return nil }
-        guard !draggedItemIDs.contains(targetItemID) else { return nil }
+        guard !draggedItemIDs.isEmpty else {
+            if dropTargetID == targetItemID {
+                dropTargetID = nil
+                dropTargetEdge = nil
+            }
+            return nil
+        }
+        guard !draggedItemIDs.contains(targetItemID) else {
+            if dropTargetID == targetItemID {
+                dropTargetID = nil
+                dropTargetEdge = nil
+            }
+            return nil
+        }
 
         isDroppingAtEnd = false
         dropTargetID = targetItemID

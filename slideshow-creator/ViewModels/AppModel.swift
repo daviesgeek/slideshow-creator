@@ -868,15 +868,20 @@ final class AppModel: ObservableObject {
         Array(availableFlags.prefix(9))
     }
 
-    var filteredPhotoItems: [PhotoItem] {
-        switch photosExclusionFilter {
+    func filteredPhotoItems(for filter: PhotosExclusionFilter, in sourceItems: [PhotoItem]? = nil) -> [PhotoItem] {
+        let itemsToFilter = sourceItems ?? items
+        switch filter {
         case .all:
-            return items
+            return itemsToFilter
         case .included:
-            return items.filter { !$0.isExcluded }
+            return itemsToFilter.filter { !$0.isExcluded }
         case .excluded:
-            return items.filter { $0.isExcluded }
+            return itemsToFilter.filter { $0.isExcluded }
         }
+    }
+
+    var filteredPhotoItems: [PhotoItem] {
+        filteredPhotoItems(for: photosExclusionFilter)
     }
 
     func selectPhoto(_ id: PhotoItem.ID?) {
@@ -905,6 +910,20 @@ final class AppModel: ObservableObject {
         } else {
             selectionAnchorPhotoID = selectedPhotoID
         }
+    }
+
+    func setPrimarySelectedPhoto(_ id: PhotoItem.ID?) {
+        guard let id else {
+            if selectedPhotoIDs.isEmpty {
+                selectedPhotoID = nil
+                selectionAnchorPhotoID = nil
+            }
+            return
+        }
+
+        guard selectedPhotoIDs.contains(id) else { return }
+        selectedPhotoID = id
+        selectionAnchorPhotoID = id
     }
 
     func togglePhotoSelection(_ id: PhotoItem.ID) {
