@@ -378,7 +378,7 @@ enum FFmpegEncoder {
             let offset = max(0, transitionPlan.totalDuration - terminalTransition.duration)
 
             filterParts.append(
-                "color=c=black:s=\(width)x\(height):r=\(fps):d=\(ffmpegTime(terminalTransition.duration))," +
+                "color=c=black:s=\(width)x\(height):r=\(fps):d=\(ffmpegTime(max(transitionPlan.totalDuration, terminalTransition.duration)))," +
                 "format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS" +
                 "[\(blackLabel)]"
             )
