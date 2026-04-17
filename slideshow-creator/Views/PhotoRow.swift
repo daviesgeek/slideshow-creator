@@ -14,7 +14,9 @@ struct PhotoRow: View {
     let onRelink: () -> Void
     let onExcludeToggle: (Bool) -> Void
     let onFlagToggle: (String, Bool) -> Void
+    let onSecondsOverrideEnabledChange: (Bool) -> Void
     let onSecondsOverrideChange: (Double?) -> Void
+    let onTransitionOverrideEnabledChange: (Bool) -> Void
     let onTransitionToNextChange: (PhotoTransitionStyle?) -> Void
     let onTransitionDurationToNextChange: (Double?) -> Void
 
@@ -132,13 +134,9 @@ struct PhotoRow: View {
 extension PhotoRow {
     private var secondsOverrideBinding: Binding<Bool> {
         Binding(
-            get: { item.secondsOverride != nil },
+            get: { item.isSecondsOverrideEnabled },
             set: { isEnabled in
-                if isEnabled {
-                    onSecondsOverrideChange(item.secondsOverride ?? effectiveSecondsPerPhoto)
-                } else {
-                    onSecondsOverrideChange(nil)
-                }
+                onSecondsOverrideEnabledChange(isEnabled)
             }
         )
     }
@@ -152,15 +150,9 @@ extension PhotoRow {
 
     private var transitionOverrideBinding: Binding<Bool> {
         Binding(
-            get: { item.transitionToNext != nil || item.transitionDurationToNext != nil },
+            get: { item.isTransitionOverrideEnabled },
             set: { isEnabled in
-                if isEnabled {
-                    onTransitionToNextChange(item.transitionToNext ?? effectiveTransitionToNext)
-                    onTransitionDurationToNextChange(item.transitionDurationToNext ?? effectiveTransitionDurationToNext)
-                } else {
-                    onTransitionToNextChange(nil)
-                    onTransitionDurationToNextChange(nil)
-                }
+                onTransitionOverrideEnabledChange(isEnabled)
             }
         )
     }

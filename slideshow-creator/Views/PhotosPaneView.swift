@@ -205,8 +205,14 @@ struct PhotosPaneView: View {
                     onFlagToggle: { flag, isEnabled in
                         model.setFlag(flag, enabled: isEnabled, for: item.id)
                     },
+                    onSecondsOverrideEnabledChange: { isEnabled in
+                        model.setPhotoSecondsOverrideEnabled(isEnabled, for: item.id)
+                    },
                     onSecondsOverrideChange: { seconds in
                         model.setPhotoSecondsOverride(seconds, for: item.id)
+                    },
+                    onTransitionOverrideEnabledChange: { isEnabled in
+                        model.setPhotoTransitionOverrideEnabled(isEnabled, for: item.id)
                     },
                     onTransitionToNextChange: { transition in
                         model.setPhotoTransitionToNext(transition, for: item.id)
@@ -401,6 +407,27 @@ struct PhotosPaneView: View {
 
             Button("Exclude") {
                 model.setPhotosExcluded(true, for: visibleSelectedPhotoIDs)
+            }
+            .disabled(!hasSelection)
+
+            Menu("Overrides") {
+                Button("Enable Photo Duration Override") {
+                    model.setPhotosSecondsOverrideEnabled(true, for: visibleSelectedPhotoIDs)
+                }
+
+                Button("Disable Photo Duration Override") {
+                    model.setPhotosSecondsOverrideEnabled(false, for: visibleSelectedPhotoIDs)
+                }
+
+                Divider()
+
+                Button("Enable Transition Override") {
+                    model.setPhotosTransitionOverrideEnabled(true, for: visibleSelectedPhotoIDs)
+                }
+
+                Button("Disable Transition Override") {
+                    model.setPhotosTransitionOverrideEnabled(false, for: visibleSelectedPhotoIDs)
+                }
             }
             .disabled(!hasSelection)
         }

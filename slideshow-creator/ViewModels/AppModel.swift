@@ -495,7 +495,9 @@ final class AppModel: ObservableObject {
                         flagsByName: document.photoFlagsByName ?? [:],
                         relinkedPathByName: document.photoRelinkedPathByName ?? [:],
                         relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:],
+                        secondsOverrideEnabledByName: document.photoSecondsOverrideEnabledByName,
                         secondsOverrideByName: document.photoSecondsOverrideByName ?? [:],
+                        transitionOverrideEnabledByName: document.photoTransitionOverrideEnabledByName,
                         transitionToNextByName: document.photoTransitionToNextByName ?? [:],
                         transitionDurationToNextByName: document.photoTransitionDurationToNextByName ?? [:]
                     )
@@ -512,7 +514,9 @@ final class AppModel: ObservableObject {
                             flagsByName: document.photoFlagsByName ?? [:],
                             relinkedPathByName: document.photoRelinkedPathByName ?? [:],
                             relinkedBookmarkByName: document.photoRelinkedBookmarkByName ?? [:],
+                            secondsOverrideEnabledByName: document.photoSecondsOverrideEnabledByName,
                             secondsOverrideByName: document.photoSecondsOverrideByName ?? [:],
+                            transitionOverrideEnabledByName: document.photoTransitionOverrideEnabledByName,
                             transitionToNextByName: document.photoTransitionToNextByName ?? [:],
                             transitionDurationToNextByName: document.photoTransitionDurationToNextByName ?? [:]
                         )
@@ -639,10 +643,12 @@ final class AppModel: ObservableObject {
             guard let transition = item.transitionToNext else { return nil }
             return (item.referenceName, transition)
         })
+        let secondsOverrideEnabledByName = Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, $0.isSecondsOverrideEnabled) })
         let secondsOverrideByName = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, Double)? in
             guard let secondsOverride = item.secondsOverride else { return nil }
             return (item.referenceName, secondsOverride)
         })
+        let transitionOverrideEnabledByName = Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, $0.isTransitionOverrideEnabled) })
         let transitionDurationToNextByName = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, Double)? in
             guard let duration = item.transitionDurationToNext else { return nil }
             return (item.referenceName, duration)
@@ -672,7 +678,9 @@ final class AppModel: ObservableObject {
             photoFlagsByName: Dictionary(uniqueKeysWithValues: items.map { ($0.referenceName, Array($0.flags)) }),
             photoRelinkedPathByName: relinkedPathByName,
             photoRelinkedBookmarkByName: relinkedBookmarkByName,
+            photoSecondsOverrideEnabledByName: secondsOverrideEnabledByName,
             photoSecondsOverrideByName: secondsOverrideByName,
+            photoTransitionOverrideEnabledByName: transitionOverrideEnabledByName,
             photoTransitionToNextByName: transitionToNextByName,
             photoTransitionDurationToNextByName: transitionDurationToNextByName
         )
@@ -856,10 +864,14 @@ final class AppModel: ObservableObject {
         flagsByName: [String: [String]],
         relinkedPathByName: [String: String],
         relinkedBookmarkByName: [String: Data],
+        secondsOverrideEnabledByName: [String: Bool]?,
         secondsOverrideByName: [String: Double],
+        transitionOverrideEnabledByName: [String: Bool]?,
         transitionToNextByName: [String: PhotoTransitionStyle],
         transitionDurationToNextByName: [String: Double]
     ) {
+        let tolerance = 0.0001
+
         for index in items.indices {
             let name = items[index].referenceName
             items[index].isExcluded = excludedByName[name] ?? false
@@ -867,9 +879,30 @@ final class AppModel: ObservableObject {
             items[index].relinkedPath = relinkedPathByName[name]
             items[index].relinkedBookmark = relinkedBookmarkByName[name]
             items[index].isRelinked = items[index].relinkedPath != nil || items[index].relinkedBookmark != nil
-            items[index].secondsOverride = secondsOverrideByName[name]
-            items[index].transitionToNext = transitionToNextByName[name]
-            items[index].transitionDurationToNext = transitionDurationToNextByName[name]
+
+            let secondsOverride = secondsOverrideByName[name]
+            items[index].secondsOverride = secondsOverride
+            if let explicitEnabled = secondsOverrideEnabledByName?[name] {
+                items[index].isSecondsOverrideEnabled = explicitEnabled
+            } else if let secondsOverride {
+                items[index].isSecondsOverrideEnabled = abs(secondsOverride - secondsPerImage) > tolerance
+            } else {
+                items[index].isSecondsOverrideEnabled = false
+            }
+
+            let transitionToNext = transitionToNextByName[name]
+            let transitionDurationToNext = transitionDurationToNextByName[name]
+            items[index].transitionToNext = transitionToNext
+            items[index].transitionDurationToNext = transitionDurationToNext
+            if let explicitEnabled = transitionOverrideEnabledByName?[name] {
+                items[index].isTransitionOverrideEnabled = explicitEnabled
+            } else if transitionToNext != nil || transitionDurationToNext != nil {
+                let effectiveStyle = transitionToNext ?? defaultTransitionToNext
+                let effectiveDuration = transitionDurationToNext ?? defaultTransitionDurationToNext
+                items[index].isTransitionOverrideEnabled = effectiveStyle != defaultTransitionToNext || abs(effectiveDuration - defaultTransitionDurationToNext) > tolerance
+            } else {
+                items[index].isTransitionOverrideEnabled = false
+            }
         }
 
         refreshPhotoAvailability()
@@ -1345,30 +1378,78 @@ final class AppModel: ObservableObject {
     }
 
     func effectiveTransitionToNext(for item: PhotoItem) -> PhotoTransitionStyle {
-        item.transitionToNext ?? defaultTransitionToNext
+        guard item.isTransitionOverrideEnabled else { return defaultTransitionToNext }
+        return item.transitionToNext ?? defaultTransitionToNext
     }
 
     func effectiveSecondsPerPhoto(for item: PhotoItem) -> Double {
-        item.secondsOverride ?? secondsPerImage
+        guard item.isSecondsOverrideEnabled else { return secondsPerImage }
+        return item.secondsOverride ?? secondsPerImage
     }
 
     func effectiveTransitionDurationToNext(for item: PhotoItem) -> Double {
-        item.transitionDurationToNext ?? defaultTransitionDurationToNext
+        guard item.isTransitionOverrideEnabled else { return defaultTransitionDurationToNext }
+        return item.transitionDurationToNext ?? defaultTransitionDurationToNext
     }
 
     func setPhotoTransitionToNext(_ transition: PhotoTransitionStyle?, for id: PhotoItem.ID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].transitionToNext = transition
+        items[index].isTransitionOverrideEnabled = true
+    }
+
+    func setPhotoTransitionOverrideEnabled(_ isEnabled: Bool, for id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].isTransitionOverrideEnabled = isEnabled
+        if isEnabled {
+            items[index].transitionToNext = items[index].transitionToNext ?? defaultTransitionToNext
+            items[index].transitionDurationToNext = items[index].transitionDurationToNext ?? defaultTransitionDurationToNext
+        }
+    }
+
+    func setPhotoSecondsOverrideEnabled(_ isEnabled: Bool, for id: PhotoItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].isSecondsOverrideEnabled = isEnabled
+        if isEnabled {
+            items[index].secondsOverride = items[index].secondsOverride ?? secondsPerImage
+        }
     }
 
     func setPhotoSecondsOverride(_ seconds: Double?, for id: PhotoItem.ID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].secondsOverride = seconds.map { max(0.01, min(999.99, $0)) }
+        items[index].isSecondsOverrideEnabled = true
     }
 
     func setPhotoTransitionDurationToNext(_ duration: Double?, for id: PhotoItem.ID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].transitionDurationToNext = duration.map { max(0.01, min(999.99, $0)) }
+        items[index].isTransitionOverrideEnabled = true
+    }
+
+    func setPhotosSecondsOverrideEnabled(_ isEnabled: Bool, for ids: Set<PhotoItem.ID>) {
+        let normalized = normalizedPhotoSelection(ids)
+        guard !normalized.isEmpty else { return }
+
+        for index in items.indices where normalized.contains(items[index].id) {
+            items[index].isSecondsOverrideEnabled = isEnabled
+            if isEnabled {
+                items[index].secondsOverride = items[index].secondsOverride ?? secondsPerImage
+            }
+        }
+    }
+
+    func setPhotosTransitionOverrideEnabled(_ isEnabled: Bool, for ids: Set<PhotoItem.ID>) {
+        let normalized = normalizedPhotoSelection(ids)
+        guard !normalized.isEmpty else { return }
+
+        for index in items.indices where normalized.contains(items[index].id) {
+            items[index].isTransitionOverrideEnabled = isEnabled
+            if isEnabled {
+                items[index].transitionToNext = items[index].transitionToNext ?? defaultTransitionToNext
+                items[index].transitionDurationToNext = items[index].transitionDurationToNext ?? defaultTransitionDurationToNext
+            }
+        }
     }
 
     func setExportFlagSelection(flag: String, isSelected: Bool) {

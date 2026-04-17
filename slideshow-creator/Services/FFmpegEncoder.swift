@@ -214,21 +214,26 @@ enum FFmpegEncoder {
         }
 
         let contentDurations = items.map { item in
-            resolvedPhotoDuration(item.secondsOverride ?? secondsPerImage)
+            let seconds = item.isSecondsOverrideEnabled ? (item.secondsOverride ?? secondsPerImage) : secondsPerImage
+            return resolvedPhotoDuration(seconds)
         }
 
         var internalTransitions: [BoundaryTransition] = []
         internalTransitions.reserveCapacity(max(items.count - 1, 0))
 
         for index in 0..<max(items.count - 1, 0) {
-            let style = items[index].transitionToNext ?? defaultTransitionToNext
+            let style = items[index].isTransitionOverrideEnabled
+                ? (items[index].transitionToNext ?? defaultTransitionToNext)
+                : defaultTransitionToNext
 
             if style == .none {
                 internalTransitions.append(BoundaryTransition(style: .none, duration: 0))
                 continue
             }
 
-            let durationValue = items[index].transitionDurationToNext ?? defaultTransitionDurationToNext
+            let durationValue = items[index].isTransitionOverrideEnabled
+                ? (items[index].transitionDurationToNext ?? defaultTransitionDurationToNext)
+                : defaultTransitionDurationToNext
             let maxAllowed = min(contentDurations[index], contentDurations[index + 1]) - frameQuantum
             let duration = resolvedTransitionDuration(durationValue, maxAllowed: maxAllowed)
 
@@ -242,11 +247,15 @@ enum FFmpegEncoder {
 
         let terminalTransition: BoundaryTransition?
         if let lastItem = items.last {
-            let style = lastItem.transitionToNext ?? defaultTransitionToNext
+            let style = lastItem.isTransitionOverrideEnabled
+                ? (lastItem.transitionToNext ?? defaultTransitionToNext)
+                : defaultTransitionToNext
             if style == .none {
                 terminalTransition = nil
             } else {
-                let durationValue = lastItem.transitionDurationToNext ?? defaultTransitionDurationToNext
+                let durationValue = lastItem.isTransitionOverrideEnabled
+                    ? (lastItem.transitionDurationToNext ?? defaultTransitionDurationToNext)
+                    : defaultTransitionDurationToNext
                 let maxAllowed = contentDurations[items.count - 1] - frameQuantum
                 let duration = resolvedTransitionDuration(durationValue, maxAllowed: maxAllowed)
 

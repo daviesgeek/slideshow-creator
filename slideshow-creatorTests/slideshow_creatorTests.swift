@@ -36,6 +36,7 @@ struct slideshow_creatorTests {
         let items = [
             PhotoItem(
                 url: URL(fileURLWithPath: "/tmp/a.jpg"),
+                isTransitionOverrideEnabled: true,
                 transitionToNext: .fade,
                 transitionDurationToNext: 1.0
             ),
@@ -45,6 +46,7 @@ struct slideshow_creatorTests {
             ),
             PhotoItem(
                 url: URL(fileURLWithPath: "/tmp/c.jpg"),
+                isTransitionOverrideEnabled: true,
                 transitionToNext: .wipeleft,
                 transitionDurationToNext: 0.5
             )
@@ -71,6 +73,7 @@ struct slideshow_creatorTests {
         let items = [
             PhotoItem(
                 url: URL(fileURLWithPath: "/tmp/a.jpg"),
+                isTransitionOverrideEnabled: true,
                 transitionToNext: .fade,
                 transitionDurationToNext: 3
             ),
@@ -93,18 +96,23 @@ struct slideshow_creatorTests {
         let items = [
             PhotoItem(
                 url: URL(fileURLWithPath: "/tmp/a.jpg"),
+                isSecondsOverrideEnabled: true,
                 secondsOverride: 2.0,
+                isTransitionOverrideEnabled: true,
                 transitionToNext: .fade,
                 transitionDurationToNext: 0.75
             ),
             PhotoItem(
                 url: URL(fileURLWithPath: "/tmp/b.jpg"),
+                isSecondsOverrideEnabled: true,
                 secondsOverride: 4.0,
                 transitionToNext: PhotoTransitionStyle.none
             ),
             PhotoItem(
                 url: URL(fileURLWithPath: "/tmp/c.jpg"),
+                isSecondsOverrideEnabled: true,
                 secondsOverride: 1.5,
+                isTransitionOverrideEnabled: true,
                 transitionToNext: .fade,
                 transitionDurationToNext: 0.5
             )
