@@ -16,18 +16,6 @@ struct PhotosPaneView: View {
     @State private var gridAvailableWidth: CGFloat = 0
 
     private var selectedPhotoIDs: Set<PhotoItem.ID> { model.selectedPhotoIDs }
-    private var visibleSelectedPhotoIDs: Set<PhotoItem.ID> {
-        selectedPhotoIDs.intersection(Set(filteredItems.map(\.id)))
-    }
-    private var selectedPhotoCount: Int { visibleSelectedPhotoIDs.count }
-    private var hasSelection: Bool { selectedPhotoCount > 0 }
-    private var selectedDragPreviewItems: [PhotoItem] {
-        guard !visibleSelectedPhotoIDs.isEmpty else { return [] }
-        return filteredItems.filter { visibleSelectedPhotoIDs.contains($0.id) }
-    }
-    private var selectedDragSelectionCount: Int {
-        max(1, visibleSelectedPhotoIDs.count)
-    }
     private let gridMinCellWidth: CGFloat = 120
     private let gridMaxCellWidth: CGFloat = 280
     private let gridSpacing: CGFloat = 10
@@ -69,6 +57,9 @@ struct PhotosPaneView: View {
     }
 
     var body: some View {
+        let filteredItems = model.filteredPhotoItems
+        let visibleSelectedPhotoIDs = selectedPhotoIDs.intersection(Set(filteredItems.map(\.id)))
+
         VStack(alignment: .leading, spacing: 8) {
             header
 
@@ -81,12 +72,18 @@ struct PhotosPaneView: View {
             }
 
             if model.photosViewMode == .list {
-                listView
+                listView(
+                    filteredItems: filteredItems,
+                    visibleSelectedPhotoIDs: visibleSelectedPhotoIDs
+                )
             } else {
-                gridView
+                gridView(
+                    filteredItems: filteredItems,
+                    visibleSelectedPhotoIDs: visibleSelectedPhotoIDs
+                )
             }
 
-            selectionActions
+            selectionActions(visibleSelectedPhotoIDs: visibleSelectedPhotoIDs)
             keyboardShortcuts
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -173,7 +170,10 @@ struct PhotosPaneView: View {
         }
     }
 
-    private var listView: some View {
+    private func listView(
+        filteredItems: [PhotoItem],
+        visibleSelectedPhotoIDs: Set<PhotoItem.ID>
+    ) -> some View {
         List(selection: Binding(get: {
             model.selectedPhotoIDs
         }, set: { newValue in
@@ -222,12 +222,13 @@ struct PhotosPaneView: View {
                     }
                 )
                 .tag(item.id)
-                .onSecondaryClick {
-                    prepareContextMenuSelection(for: item.id)
-                }
                 .contextMenu {
                     PhotoContextMenuContent(
-                        targetItems: contextMenuTargetItems(for: item.id),
+                        targetItems: contextMenuTargetItems(
+                            for: item.id,
+                            filteredItems: filteredItems,
+                            visibleSelectedPhotoIDs: visibleSelectedPhotoIDs
+                        ),
                         primaryItem: item,
                         shortcutFlags: model.shortcutFlags,
                         onOpenFullscreen: {
@@ -253,8 +254,14 @@ struct PhotosPaneView: View {
         .frame(minHeight: 260)
     }
 
-    private var gridView: some View {
-        ScrollViewReader { proxy in
+    private func gridView(
+        filteredItems: [PhotoItem],
+        visibleSelectedPhotoIDs: Set<PhotoItem.ID>
+    ) -> some View {
+        let selectedDragPreviewItems = filteredItems.filter { visibleSelectedPhotoIDs.contains($0.id) }
+        let selectedDragSelectionCount = max(1, visibleSelectedPhotoIDs.count)
+
+        return ScrollViewReader { proxy in
             ScrollView {
                 GeometryReader { proxy in
                     Color.clear
@@ -299,12 +306,13 @@ struct PhotosPaneView: View {
                             }
                         )
                         .id(item.id)
-                        .onSecondaryClick {
-                            prepareContextMenuSelection(for: item.id)
-                        }
                         .contextMenu {
                             PhotoContextMenuContent(
-                                targetItems: contextMenuTargetItems(for: item.id),
+                                targetItems: contextMenuTargetItems(
+                                    for: item.id,
+                                    filteredItems: filteredItems,
+                                    visibleSelectedPhotoIDs: visibleSelectedPhotoIDs
+                                ),
                                 primaryItem: item,
                                 shortcutFlags: model.shortcutFlags,
                                 onOpenFullscreen: {
@@ -373,8 +381,11 @@ struct PhotosPaneView: View {
         .frame(minHeight: 260)
     }
 
-    private var selectionActions: some View {
-        HStack(spacing: 8) {
+    private func selectionActions(visibleSelectedPhotoIDs: Set<PhotoItem.ID>) -> some View {
+        let selectedPhotoCount = visibleSelectedPhotoIDs.count
+        let hasSelection = selectedPhotoCount > 0
+
+        return HStack(spacing: 8) {
             Text(hasSelection ? "\(selectedPhotoCount) selected" : "No selection")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -557,12 +568,10 @@ struct PhotosPaneView: View {
         }
     }
 
-    private func prepareContextMenuSelection(for clickedID: PhotoItem.ID) {
-        guard !visibleSelectedPhotoIDs.contains(clickedID) else { return }
-        model.selectPhoto(clickedID)
-    }
-
-    private func contextMenuTargetIDs(for clickedID: PhotoItem.ID) -> Set<PhotoItem.ID> {
+    private func contextMenuTargetIDs(
+        for clickedID: PhotoItem.ID,
+        visibleSelectedPhotoIDs: Set<PhotoItem.ID>
+    ) -> Set<PhotoItem.ID> {
         let visibleSelection = visibleSelectedPhotoIDs
         if visibleSelection.contains(clickedID), !visibleSelection.isEmpty {
             return visibleSelection
@@ -571,8 +580,15 @@ struct PhotosPaneView: View {
         return [clickedID]
     }
 
-    private func contextMenuTargetItems(for clickedID: PhotoItem.ID) -> [PhotoItem] {
-        let targetIDs = contextMenuTargetIDs(for: clickedID)
+    private func contextMenuTargetItems(
+        for clickedID: PhotoItem.ID,
+        filteredItems: [PhotoItem],
+        visibleSelectedPhotoIDs: Set<PhotoItem.ID>
+    ) -> [PhotoItem] {
+        let targetIDs = contextMenuTargetIDs(
+            for: clickedID,
+            visibleSelectedPhotoIDs: visibleSelectedPhotoIDs
+        )
         return filteredItems.filter { targetIDs.contains($0.id) }
     }
 
