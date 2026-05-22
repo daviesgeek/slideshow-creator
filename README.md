@@ -80,6 +80,13 @@ Then run the `slideshow-creator` scheme.
 
 Once the app is open, use `Validate FFmpeg` to make sure it can find and launch FFmpeg. You can also edit the FFmpeg path directly in the app.
 
+## Releases
+
+GitHub Releases include a downloadable macOS `.zip` artifact built by GitHub Actions.
+
+Current release artifacts are intentionally **unsigned** (not Developer ID signed or notarized yet).
+That means macOS Gatekeeper may warn when opening the app, and users may need to right-click the app and choose `Open`.
+
 ## Basic workflow
 
 1. Click `Choose Photos Folder`.
@@ -152,6 +159,7 @@ Depending on your local Xcode/macOS setup, you may need to add an explicit desti
 ## Current caveats
 
 - This is a personal utility app that happens to be public, not a polished App Store release.
+- GitHub Release artifacts are currently unsigned and not notarized.
 - FFmpeg is required and is not currently bundled in this repo.
 - The app is macOS-only.
 - The Xcode project still contains the starter SwiftData `Item` model from the template.
