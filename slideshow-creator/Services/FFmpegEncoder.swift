@@ -327,10 +327,13 @@ enum FFmpegEncoder {
 
         let groups = makeHardCutGroups(itemCount: items.count, transitions: transitionPlan.internalTransitions)
         var groupOutputLabels: [String] = []
+        var groupDurations: [Double] = []
 
         for (groupIndex, range) in groups.enumerated() {
+            let groupDuration = transitionPlan.contentDurations[range].reduce(0, +)
             if range.lowerBound == range.upperBound {
                 groupOutputLabels.append("p\(range.lowerBound)")
+                groupDurations.append(groupDuration)
                 continue
             }
 
@@ -356,6 +359,27 @@ enum FFmpegEncoder {
             }
 
             groupOutputLabels.append(currentLabel)
+            groupDurations.append(groupDuration)
+        }
+
+        if let terminalTransition = transitionPlan.terminalTransition,
+           let lastGroupIndex = groupOutputLabels.indices.last {
+            let blackLabel = "v_black"
+            let terminalLabel = "g\(lastGroupIndex)_terminal"
+            let offset = max(0, groupDurations[lastGroupIndex] - terminalTransition.duration)
+
+            filterParts.append(
+                "color=c=black:s=\(width)x\(height):r=\(fps):d=\(ffmpegTime(terminalTransition.duration))," +
+                "format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS" +
+                "[\(blackLabel)]"
+            )
+            filterParts.append(
+                "[\(groupOutputLabels[lastGroupIndex])][\(blackLabel)]" +
+                "xfade=transition=\(terminalTransition.style.rawValue):duration=\(ffmpegTime(terminalTransition.duration)):offset=\(ffmpegTime(offset))" +
+                "[\(terminalLabel)]"
+            )
+
+            groupOutputLabels[lastGroupIndex] = terminalLabel
         }
 
         let contentLabel: String
@@ -368,29 +392,10 @@ enum FFmpegEncoder {
         default:
             let concatInputs = groupOutputLabels.map { "[\($0)]" }.joined()
             contentLabel = "v_content"
-            filterParts.append("\(concatInputs)concat=n=\(groupOutputLabels.count):v=1:a=0[\(contentLabel)]")
+            filterParts.append("\(concatInputs)concat=n=\(groupOutputLabels.count):v=1:a=0,settb=AVTB,setpts=PTS-STARTPTS[\(contentLabel)]")
         }
 
-        let finalVideoLabel: String
-        if let terminalTransition = transitionPlan.terminalTransition {
-            let blackLabel = "v_black"
-            let terminalLabel = "v"
-            let offset = max(0, transitionPlan.totalDuration - terminalTransition.duration)
-
-            filterParts.append(
-                "color=c=black:s=\(width)x\(height):r=\(fps):d=\(ffmpegTime(max(transitionPlan.totalDuration, terminalTransition.duration)))," +
-                "format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS" +
-                "[\(blackLabel)]"
-            )
-            filterParts.append(
-                "[\(contentLabel)][\(blackLabel)]" +
-                "xfade=transition=\(terminalTransition.style.rawValue):duration=\(ffmpegTime(terminalTransition.duration)):offset=\(ffmpegTime(offset))" +
-                "[\(terminalLabel)]"
-            )
-            finalVideoLabel = terminalLabel
-        } else {
-            finalVideoLabel = contentLabel
-        }
+        let finalVideoLabel = contentLabel
 
         if !soundtracks.isEmpty {
             let audioStartIndex = items.count
