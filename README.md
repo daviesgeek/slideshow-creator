@@ -52,7 +52,7 @@ Audio formats currently scanned from the soundtrack folder:
 - Xcode
 - FFmpeg
 
-The Xcode project currently has its macOS deployment target set to `26.1`.
+The Xcode project currently has its macOS deployment target set to `15.0`.
 
 FFmpeg is expected to exist somewhere the app can launch it. The default path is:
 
