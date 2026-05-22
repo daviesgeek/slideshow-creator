@@ -13,6 +13,7 @@ struct SecondsPerPhotoField: View {
     /// Text editing state for the input field
     @State private var textValue: String = ""
     @State private var isEditing: Bool = false
+    @FocusState private var isTextFieldFocused: Bool
 
     /// Minimum allowed value
     private let minValue: Double = 0.01
@@ -53,11 +54,15 @@ struct SecondsPerPhotoField: View {
                     .frame(width: 70)
                     .multilineTextAlignment(.center)
                     .textFieldStyle(.roundedBorder)
-                    .onChange(of: textValue) { _, newValue in
-                        validateAndUpdateBinding(newValue)
-                    }
+                    .focused($isTextFieldFocused)
                     .onSubmit {
                         commitValue()
+                    }
+                    .onChange(of: isTextFieldFocused) { _, isFocused in
+                        isEditing = isFocused
+                        if !isFocused {
+                            commitValue()
+                        }
                     }
 
                 Button(action: incrementValue) {
@@ -87,25 +92,6 @@ struct SecondsPerPhotoField: View {
     /// Formats a double value for display in the text field
     private func formatValue(_ val: Double) -> String {
         numberFormatter.string(from: NSNumber(value: val)) ?? String(format: "%.2f", val)
-    }
-
-    /// Validates and updates the binding when text changes
-    private func validateAndUpdateBinding(_ text: String) {
-        // Allow empty text while editing
-        guard !text.isEmpty else { return }
-
-        // Parse the input (accept both . and , as decimal separator)
-        let cleanedText = text.replacingOccurrences(of: ",", with: ".")
-        guard let parsedValue = Double(cleanedText) else {
-            // Invalid input, don't update binding
-            return
-        }
-
-        // Clamp to valid range
-        let clampedValue = min(max(parsedValue, minValue), maxValue)
-
-        // Update binding with clamped value
-        value = clampedValue
     }
 
     /// Commits the current text value and validates it
